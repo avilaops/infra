@@ -137,9 +137,10 @@ build-pesado ./deploy/empacotar.sh      # script do produto que faz build por de
   é 128 + o sinal.
 - **`KILL` no `build-pesado`** (só nele ou no grupo de processos dele, que é
   como um executor de agente encerra no estouro de tempo): o script morre sem
-  tratar, mas um vigia (`build-pesado-vigia` no `ps`, em sessão própria, com a
-  trava na mão) percebe, manda `TERM` ao grupo do comando, `KILL` em quem não
-  encerrar em `BUILD_PESADO_CARENCIA_S`, e só então solta a trava.
+  tratar, mas um vigia (ache com `pgrep -f build-pesado-vigia`; em sessão
+  própria, com a trava na mão) percebe, manda `TERM` ao grupo do comando,
+  `KILL` em quem não encerrar em `BUILD_PESADO_CARENCIA_S`, e só então solta a
+  trava.
 - **Limite do `KILL`:** `kill -9` no `build-pesado` **e** no vigia solta a
   trava na hora e deixa o build rodando. Para interromper um build, mande
   `TERM` ao `build-pesado`.
