@@ -27,9 +27,13 @@
 # Sinais: HUP, INT, QUIT e TERM recebidos aqui viram TERM para o grupo de
 # processos do comando (o comando e tudo o que ele disparou), e a trava so e
 # solta com esse grupo vazio. Quem nao encerrar no prazo de carencia leva KILL.
-# Limite: KILL (ou outro sinal que nao da para tratar) neste script solta a
-# trava na hora e deixa o comando rodando; para interromper um build, use TERM
-# no build-pesado, ou mate o grupo do comando (o pid do comando e o do grupo).
+# KILL (ou outro sinal que nao da para tratar) neste script, ou no grupo de
+# processos dele, e coberto por um vigia: um processo em sessao propria, que
+# tambem segura a trava, percebe a morte do script, manda TERM e, no fim da
+# carencia, KILL ao grupo do comando, e so entao solta a trava.
+# Limite: KILL no script E no vigia solta a trava na hora e deixa o comando
+# rodando; para interromper um build, use TERM no build-pesado, ou mate o
+# grupo do comando (o pid do comando e o do grupo).
 #
 # Saida: a do comando; 128+sinal se foi interrompido por sinal; 75 se a trava
 # nao soltou no prazo; 64 em erro de uso.
@@ -63,7 +67,7 @@ fi
 sob_a_trava_de() {
   local alvo=$1 p=$$
   [[ "$alvo" =~ ^[1-9][0-9]*$ ]] && (( alvo > 1 )) || return 1
-  [[ "$(tr '\0' ' ' < "/proc/$alvo/cmdline" 2>/dev/null)" == *build-pesado* ]] || return 1
+  [[ "$({ tr '\0' ' ' < "/proc/$alvo/cmdline"; } 2>/dev/null)" == *build-pesado* ]] || return 1
   while [[ "$p" =~ ^[0-9]+$ ]] && (( p > 1 )); do
     p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ') || return 1
     [[ "$p" == "$alvo" ]] && return 0
@@ -115,6 +119,54 @@ fi
 rm -f "$dono" 2>/dev/null || true
 printf 'pid %s, desde %s: %s, em %s\n' "$$" "$(date '+%d/%m %H:%M:%S')" "$1" "$PWD" > "$dono" 2>/dev/null || true
 
+# Espera o grupo de processos $1 esvaziar; quem nao encerrar em $2 segundos
+# leva KILL. Usada aqui e no vigia.
+espera_grupo_vazio() {
+  local grupo=$1 carencia=$2 limite forcado=0
+  limite=$(( SECONDS + carencia ))
+  while kill -0 -- "-$grupo" 2>/dev/null || kill -0 "$grupo" 2>/dev/null; do
+    if (( SECONDS >= limite )); then
+      if (( forcado == 1 )); then
+        aviso "o grupo $grupo nao encerrou nem com KILL. Soltando a trava assim mesmo."
+        break
+      fi
+      aviso "o comando nao encerrou em ${carencia}s depois do sinal. Enviando KILL ao grupo $grupo."
+      kill -KILL -- "-$grupo" 2>/dev/null || true
+      forcado=1
+      limite=$(( SECONDS + carencia + 5 ))
+    fi
+    # O sleep e filho em primeiro plano: um sinal mandado ao grupo deste
+    # script o mata, e isso nao pode encerrar a espera (set -e).
+    sleep 0.2 8>&- 9<&- || true
+  done
+}
+
+# Vigia: roda em sessao propria (fora do alcance de um sinal mandado ao grupo
+# deste script), herda o descritor da trava e le um canal cuja unica ponta de
+# escrita fica neste script. "fim" no canal: o script terminou por conta
+# propria, nada a fazer. Canal fechado sem "fim": o script morreu sem tratar
+# (KILL nele ou no grupo dele); o vigia encerra o grupo do comando e so entao
+# sai, soltando a trava.
+vigia() {
+  local script=$1 carencia=$2 dono=$3 grupo= linha
+  trap '' HUP INT QUIT TERM PIPE
+  while IFS= read -r linha; do
+    case "$linha" in
+      'grupo '*) grupo=${linha#grupo } ;;
+      fim) exit 0 ;;
+    esac
+  done
+  if [[ "$grupo" =~ ^[1-9][0-9]*$ ]] && kill -0 -- "-$grupo" 2>/dev/null; then
+    aviso "o build-pesado (pid $script) morreu sem encerrar o comando. Enviando TERM ao grupo $grupo."
+    kill -TERM -- "-$grupo" 2>/dev/null || true
+    espera_grupo_vazio "$grupo" "$carencia"
+  fi
+  [[ "$(cat "$dono" 2>/dev/null)" != "pid $script, "* ]] || rm -f "$dono" 2>/dev/null || true
+  exit 0
+}
+# Escrita em subshell: se o vigia tiver morrido, o SIGPIPE fica nela.
+avisa_vigia() { ( printf '%s\n' "$1" >&8 ) 2>/dev/null || true; }
+
 export BUILD_PESADO_TRAVA="$lock" BUILD_PESADO_TRAVA_PID="$$"
 filho=
 sinal=0
@@ -127,34 +179,34 @@ trap 'repassa 1' HUP
 trap 'repassa 2' INT
 trap 'repassa 3' QUIT
 trap 'repassa 15' TERM
+coproc VIGIA {
+  exec setsid bash -c "$(declare -f aviso espera_grupo_vazio vigia); vigia \"\$@\"" \
+    build-pesado-vigia "$$" "$carencia" "$dono" >&2
+}
+vigia_pid=$VIGIA_PID
+# O canal fica so no descritor 8: os dois do coproc sao fechados para nao
+# vazarem para o comando.
+exec 8>&"${VIGIA[1]}"
+eval "exec ${VIGIA[0]}<&- ${VIGIA[1]}>&-"
 # O comando roda em sessao e grupo de processos proprios (setsid), para o
-# sinal alcancar tambem o que ele disparou, e sem o descritor da trava:
-# processo que ele deixar para tras ao terminar por conta propria nao segura a
-# trava.
-setsid "$@" <&0 9<&- &
+# sinal alcancar tambem o que ele disparou, e sem o descritor da trava nem o
+# canal do vigia: processo que ele deixar para tras ao terminar por conta
+# propria nao segura a trava.
+setsid "$@" <&0 8>&- 9<&- &
 filho=$!
+avisa_vigia "grupo $filho"
 (( sinal == 0 )) || repassa "$sinal"
 status=0
 wait "$filho" || status=$?
 if (( sinal != 0 )); then
   # Um sinal interrompe o wait antes do comando terminar: a trava so e solta
   # com o grupo inteiro encerrado.
-  limite=$(( SECONDS + carencia ))
-  forcado=0
-  while kill -0 -- "-$filho" 2>/dev/null || kill -0 "$filho" 2>/dev/null; do
-    if (( SECONDS >= limite )); then
-      if (( forcado == 1 )); then
-        aviso "o grupo $filho nao encerrou nem com KILL. Soltando a trava assim mesmo."
-        break
-      fi
-      aviso "o comando nao encerrou em ${carencia}s depois do sinal. Enviando KILL ao grupo $filho."
-      kill -KILL -- "-$filho" 2>/dev/null || true
-      forcado=1
-      limite=$(( SECONDS + carencia + 5 ))
-    fi
-    sleep 0.2
-  done
+  espera_grupo_vazio "$filho" "$carencia"
   status=$(( 128 + sinal ))
 fi
 rm -f "$dono" 2>/dev/null || true
+# O vigia sai antes deste script: a trava fica livre no instante da saida.
+avisa_vigia fim
+exec 8>&-
+wait "$vigia_pid" 2>/dev/null || true
 exit "$status"

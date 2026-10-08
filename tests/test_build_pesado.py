@@ -97,12 +97,16 @@ class BuildPesado(unittest.TestCase):
     def trava_livre(self):
         return subprocess.run(['flock', '-n', self.env['BUILD_PESADO_LOCK'], 'true']).returncode == 0
 
-    def disparar_com_neto(self, comando, **env):
-        """Sobe o wrapper com um shell que deixa um `sleep` como neto; devolve (wrapper, pid do neto)."""
+    def disparar_com_neto(self, comando, grupo_proprio=False, **env):
+        """Sobe o wrapper com um shell que deixa um `sleep` como neto; devolve (wrapper, pid do neto).
+
+        Com grupo_proprio o wrapper e lider de um grupo de processos, como quando
+        um executor de agente o dispara e depois sinaliza o grupo inteiro."""
         arquivo = self.root / 'neto.pid'
         wrapper = subprocess.Popen(
             ['bash', str(SCRIPT), 'bash', '-c', comando, '_', str(arquivo)],
-            env=dict(self.env, **env), stderr=subprocess.PIPE, text=True)
+            env=dict(self.env, **env), stderr=subprocess.PIPE, text=True,
+            start_new_session=grupo_proprio)
 
         def limpar():
             if arquivo.exists() and arquivo.read_text().strip():
@@ -218,6 +222,66 @@ class BuildPesado(unittest.TestCase):
                              text=True, capture_output=True, timeout=60)
         self.assertEqual((eco.returncode, eco.stdout), (0, 'oi\n'))
         self.assertEqual(self.run_script('printf', '[%s]', 'a b', "c'd", '').stdout, "[a b][c'd][]")
+
+    # Achados 1, 2 e 4 da revisao da tarefa 245 (tarefa 256).
+
+    def esperar(self, condicao, segundos):
+        fim = time.monotonic() + segundos
+        while time.monotonic() < fim:
+            if condicao():
+                return True
+            time.sleep(0.1)
+        return condicao()
+
+    def test_achado1_segundo_term_no_grupo_durante_a_carencia_nao_solta_a_trava(self):
+        wrapper, neto = self.disparar_com_neto(
+            '(trap "" TERM; exec sleep 30) & echo $! > "$1"; wait',
+            grupo_proprio=True, BUILD_PESADO_CARENCIA_S='3')
+        time.sleep(0.3)
+        os.killpg(wrapper.pid, signal.SIGTERM)
+        time.sleep(0.7)
+        os.killpg(wrapper.pid, signal.SIGTERM)
+        time.sleep(0.7)
+        self.assertIsNone(wrapper.poll(), 'o segundo TERM no grupo derrubou o wrapper na carencia')
+        self.assertTrue(vivo(neto))
+        self.assertFalse(self.trava_livre())
+        self.assertEqual(wrapper.wait(timeout=20), 143)
+        self.assertFalse(vivo(neto))
+        self.assertTrue(self.trava_livre())
+        self.assertFalse((self.root / 'build.lock.dono').exists())
+
+    def test_achado2_kill_no_grupo_do_wrapper_encerra_o_build_antes_de_soltar_a_trava(self):
+        # O KILL no grupo leva o wrapper sem chance de tratar; o vigia, fora do
+        # grupo, segura a trava, manda TERM ao grupo do comando e, como o neto
+        # ignora, KILL no fim da carencia.
+        wrapper, neto = self.disparar_com_neto(
+            '(trap "" TERM; exec sleep 30) & echo $! > "$1"; wait',
+            grupo_proprio=True, BUILD_PESADO_CARENCIA_S='2')
+        time.sleep(0.3)
+        os.killpg(wrapper.pid, signal.SIGKILL)
+        self.assertEqual(wrapper.wait(timeout=20), -signal.SIGKILL)
+        time.sleep(0.5)
+        self.assertTrue(vivo(neto), 'o neto caiu antes da carencia: nao houve TERM antes do KILL')
+        self.assertFalse(self.trava_livre(), 'a trava soltou com o build vivo')
+        self.assertTrue(self.esperar(lambda: not vivo(neto), 15), 'o build sobreviveu ao KILL no grupo do wrapper')
+        self.assertTrue(self.esperar(self.trava_livre, 5))
+        self.assertTrue(self.esperar(lambda: not (self.root / 'build.lock.dono').exists(), 5))
+        self.assertIn('Enviando KILL', wrapper.stderr.read())
+
+    def test_achado2_comando_nao_herda_descritor_da_trava_nem_do_vigia(self):
+        # Descritor a mais no comando seguraria a trava (9) ou esconderia do
+        # vigia a morte do wrapper (o lado de escrita do canal).
+        resultado = self.run_script(
+            'bash', '-c', 'for n in {3..255}; do [ -e /proc/$$/fd/$n ] && echo $n; done; true')
+        self.assertEqual((resultado.returncode, resultado.stdout), (0, ''), resultado.stderr)
+
+    def test_achado4_pid_morto_na_variavel_herdada_nao_suja_o_stderr(self):
+        morto = subprocess.Popen(['true'])
+        morto.wait()
+        resultado = self.run_script('echo', 'ok', BUILD_PESADO_TRAVA=self.env['BUILD_PESADO_LOCK'],
+                                    BUILD_PESADO_TRAVA_PID=str(morto.pid))
+        self.assertEqual((resultado.returncode, resultado.stdout), (0, 'ok\n'))
+        self.assertEqual(resultado.stderr, '')
 
 
 class InstalarBuildPesado(unittest.TestCase):

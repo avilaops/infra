@@ -135,9 +135,14 @@ build-pesado ./deploy/empacotar.sh      # script do produto que faz build por de
   grupo inteiro (o comando e o que ele disparou); a trava só solta com o grupo
   vazio, quem não encerrar em `BUILD_PESADO_CARENCIA_S` leva `KILL`, e a saída
   é 128 + o sinal.
-- **Limite do `KILL`:** `kill -9` no `build-pesado` solta a trava na hora e
-  deixa o build rodando. Para interromper um build, mande `TERM` ao
-  `build-pesado`; nunca `KILL` só nele.
+- **`KILL` no `build-pesado`** (só nele ou no grupo de processos dele, que é
+  como um executor de agente encerra no estouro de tempo): o script morre sem
+  tratar, mas um vigia (`build-pesado-vigia` no `ps`, em sessão própria, com a
+  trava na mão) percebe, manda `TERM` ao grupo do comando, `KILL` em quem não
+  encerrar em `BUILD_PESADO_CARENCIA_S`, e só então solta a trava.
+- **Limite do `KILL`:** `kill -9` no `build-pesado` **e** no vigia solta a
+  trava na hora e deixa o build rodando. Para interromper um build, mande
+  `TERM` ao `build-pesado`.
 - Quem espera vê apenas o pid, a hora, o nome do comando e o diretório de quem
   está com a trava (`/var/lock/build-pesado.lock.dono`); os argumentos não são
   gravados, porque podem carregar segredo.
