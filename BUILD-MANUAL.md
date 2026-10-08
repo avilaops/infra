@@ -32,6 +32,16 @@ O deploy lê a mesma configuração do `avila-deploy`
 (`/etc/avilaops/deploy/<aplicacao>.conf`, versionada em `deploy/production/`) e
 só aceita imagem do `IMAGE_REPOSITORY` daquela aplicação.
 
+**Os dois caminhos estão em uso (conferido em 08/10/2026, tarefa 247).** O GitHub Actions
+não está parado: de 01/10 a 08/10 o `avila-deploy` rodou 114 vezes no `applications` (39 do
+`lojas.avilaops.com`, 8 delas em 08/10). O `/usr/local/sbin/avila-deploy` instalado é de
+18/09/2026 (152 linhas) e está bem atrás de `scripts/deploy-container.sh` (283 linhas): não
+tem `preflight`, `ensure_space`, `prune_old_images`, a cópia do `.env` para o Prisma nem o
+dump antes da migração. Ou seja, **deploy do `lojas` pelo Actions migra sem dump**; só o
+`avila-deploy-local` faz o dump. Instalar a versão do repositório troca o deploy de todas as
+aplicações de uma vez e pede revisão própria do que mudou desde 18/09 (ver "Instalar ou
+atualizar").
+
 ## Limites
 
 - Só aplicações em container. Estático e systemd continuam só pelo Actions.
@@ -42,8 +52,37 @@ só aceita imagem do `IMAGE_REPOSITORY` daquela aplicação.
 - Nada de código fica nos servidores: a pasta do build some ao terminar, o
   arquivo é apagado na origem depois de transferido e no destino depois de
   carregado. O que sobrar de um dia para o outro o `avila-build` remove.
-- `dump_if_pending`, `run_migrations` e `healthy` em `deploy-container-local.sh` são cópia das de
-  `deploy-container.sh`. Mudou lá, muda aqui.
+- `dump_if_pending` e `healthy` em `deploy-container-local.sh` são cópia das de
+  `deploy-container.sh` (há teste que exige a `dump_if_pending` igual nas duas). A
+  `run_migrations` faz o mesmo papel com outra chamada do Prisma. Mudou lá, muda aqui.
+- **Deploy que para na migração obriga a reenviar a imagem.** O `avila-deploy-local` apaga o
+  `.tar.gz` logo depois do `docker load`, antes da migração. Se o deploy parar ali (dump que
+  falha ou sai incompleto, banco da `DATABASE_URL` diferente de `MIGRATE_DUMP_DB`, migração
+  que falha), o serviço segue na imagem anterior, nada foi migrado nem trocado, e o arquivo já
+  não existe: corrigida a causa, rode o `publicar-manual.ps1` de novo (build e transferência
+  inteiros). A imagem `sha-<commit>` fica carregada no Docker do servidor, mas o
+  `avila-deploy-local` só aceita arquivo.
+
+## Dump antes da migração (`MIGRATE_DUMP_DB`)
+
+Destino cujo `.conf` define `MIGRATE_DUMP_DB=<banco>` (hoje só o `lojas.avilaops.com`) ganha
+um `pg_dump` em `/opt/backups/db/pre-migracao-<aplicação>-AAAAMMDD-HHMMSS.sql.gz` antes de
+migração pendente. Sem pendência não há dump. Regras que param o deploy antes de migrar:
+
+- o nome do banco na `DATABASE_URL` do `MIGRATE_ENV_FILE` tem de ser igual a
+  `MIGRATE_DUMP_DB` (conferido em todo deploy, com ou sem pendência); URL que não dá para ler
+  (sem banco, senha com `?` ou `#` sem codificar, nome montado por `${VAR}`) também para.
+  Só o nome é conferido: o dump sai sempre do Postgres local do host, então `MIGRATE_DUMP_DB`
+  só serve para banco que mora nele;
+- dump que falha, sai vazio, truncado ou não chega ao nome final.
+
+A linha de sucesso no log é `==> dump conferido: <arquivo> (<bytes> bytes)`. Os arquivos saem
+pela rotação local (o mais recente fica, os outros 7 dias) e, com o `sync-r2.sh` da tarefa 247
+instalado, **não vão para o R2**
+(`applications/sync-r2.sh`). Não há teto por quantidade, de propósito: quando uma migração
+falha e o deploy é repetido, o dump que vale é o mais antigo, e um teto apagaria justamente
+esse. Rever se o dump do `lojas` passar de 200 MB (hoje 5,9 MB) ou o disco do `applications`
+ficar com menos de 5 GB livres.
 
 ## Instalar ou atualizar os scripts nos servidores
 
@@ -51,6 +90,20 @@ só aceita imagem do `IMAGE_REPOSITORY` daquela aplicação.
 ssh apps-noclient 'tr -d "\r" > /usr/local/sbin/avila-build && chmod 755 /usr/local/sbin/avila-build' < scripts/build-noclient.sh
 ssh applications 'tr -d "\r" > /usr/local/sbin/avila-deploy-local && chmod 700 /usr/local/sbin/avila-deploy-local' < scripts/deploy-container-local.sh
 ```
+
+No `applications` o arquivo é trocado com deploy podendo estar em curso: prefira gravar ao
+lado e trocar com `mv` (atômico), depois de conferir que nenhuma trava de
+`/var/lib/avilaops/deploy/*/lock` está presa e de guardar a cópia de volta em `/opt/backups`:
+
+```bash
+ssh applications 'cp -p /usr/local/sbin/avila-deploy-local /opt/backups/avila-deploy-local.bak-AAAAMMDD-tNNN'
+ssh applications 'tr -d "\r" > /usr/local/sbin/.avila-deploy-local.novo && bash -n /usr/local/sbin/.avila-deploy-local.novo \
+  && chmod 700 /usr/local/sbin/.avila-deploy-local.novo && mv /usr/local/sbin/.avila-deploy-local.novo /usr/local/sbin/avila-deploy-local' < scripts/deploy-container-local.sh
+```
+
+O `/usr/local/sbin/avila-deploy` (`scripts/deploy-container.sh`, modo 755, chamado pelo
+`gha-deploy` via `sudo`) se instala do mesmo jeito, com os nomes trocados. **Não foi
+reinstalado desde 18/09/2026**: a versão do repositório nunca rodou em produção.
 
 ## Build no servidor dos agentes (`creators`): um por vez
 

@@ -11,8 +11,9 @@
 # servico nao responder. O que muda e a origem da imagem — um arquivo conferido
 # por checksum, no lugar de um pull por digest.
 #
-# As funcoes dump_if_pending, run_migrations e healthy sao copia das de deploy-container.sh.
-# Mudou la, muda aqui.
+# As funcoes dump_if_pending e healthy sao copia das de deploy-container.sh
+# (a dump_if_pending tem teste que exige as duas iguais). A run_migrations faz o
+# mesmo papel com outra chamada do Prisma. Mudou la, muda aqui.
 set -euo pipefail
 umask 077
 
@@ -31,11 +32,27 @@ fail() { printf '%s\n' "$*" >&2; exit 1; }
 # rotacionador ja entende: fica o mais recente da familia, os outros 7 dias.
 # Se o dump falhar ou nao passar na conferencia, o deploy para ANTES de migrar.
 #
-# Uso: dump_if_pending <comando que sai com 0 quando nao ha migracao pendente>
+# Uso: dump_if_pending <URL do banco que sera migrado> <comando que sai com 0 quando nao ha migracao pendente>
 dump_if_pending() {
-  local db=${MIGRATE_DUMP_DB:-} dir=${MIGRATE_DUMP_DIR:-/opt/backups/db} final partial size
+  local db=${MIGRATE_DUMP_DB:-} dir=${MIGRATE_DUMP_DIR:-/opt/backups/db} target=${1:-} final partial size
+  shift || true
   [[ -n "$db" ]] || return 0
   [[ "$db" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || fail 'Nome de banco para o dump invalido.'
+  # O dump sai de MIGRATE_DUMP_DB (.conf) e a migracao usa a URL do .env. Se os
+  # dois apontarem para bancos diferentes, sairia "dump conferido" do banco
+  # errado. Confere o nome do banco na URL (esquema://usuario:senha@host:porta/banco?opcoes)
+  # antes de qualquer coisa. URL que nao da para ler tambem para o deploy. A
+  # mensagem nao leva nenhum pedaco da URL: ela carrega a senha.
+  # So o nome e conferido: host e porta diferentes do Postgres local nao sao vistos aqui.
+  if [[ "$target" == *://* ]]; then
+    target=${target#*://}
+    target=${target%%[?#]*}
+    target=${target##*@}
+    if [[ "$target" == */* ]]; then target=${target#*/}; else target=''; fi
+  else
+    target=''
+  fi
+  [[ "$target" == "$db" ]] || fail 'Banco da URL de migracao nao e o de MIGRATE_DUMP_DB; nada foi migrado nem trocado.'
   [[ -d "$dir" ]] || fail 'Diretorio de dumps ausente.'
   # `prisma migrate status` sai com 0 so quando o banco esta em dia. Banco fora
   # do ar tambem sai diferente de 0, e ai o dump falha logo abaixo: para.
@@ -70,16 +87,27 @@ dump_if_pending() {
   fi
   printf '==> dump conferido: %s (%s bytes)\n' "$final" "$size" >&2
 }
+# Prisma com a URL do banco no AMBIENTE do processo, exportada dentro do
+# subshell. Como argumento do `env` ela (com a senha) ficava visivel em `ps`
+# para qualquer usuario do servidor enquanto o comando rodava. So o npx recebe a
+# variavel: o pg_dump do dump nao herda. Usa var_name, db_url, major e
+# migrate_dir de run_migrations.
+prisma_migrate() (
+  export "${var_name}=${db_url}"
+  exec npx -y "prisma@${major}" migrate "$@" --schema "$migrate_dir/prisma/schema.prisma"
+)
 run_migrations() {
   local base=$1 migrate_env var_name db_url schema_dir major migrate_dir cid
   [[ -n "${MIGRATE_ENV_FILE:-}" ]] || return 0
   migrate_env="$base/${MIGRATE_ENV_FILE}"
   [[ -f "$migrate_env" ]] || fail 'Arquivo de ambiente da migracao nao encontrado.'
   var_name=${MIGRATE_DB_VAR:-DATABASE_URL}
+  [[ "$var_name" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || fail 'Nome de variavel de banco invalido.'
   db_url=$(grep -m1 "^${var_name}=" "$migrate_env" | cut -d= -f2-)
   [[ -n "$db_url" ]] || fail 'Variavel de banco ausente no ambiente da migracao.'
   # O .env pode trazer o valor entre aspas (o do auth traz); o Prisma recusa a
   # URL com as aspas dentro.
+  db_url=${db_url%$'\r'}
   db_url=${db_url%\"}; db_url=${db_url#\"}; db_url=${db_url%\'}; db_url=${db_url#\'}
   db_url=${db_url//host.docker.internal/127.0.0.1}
   schema_dir=${MIGRATE_SCHEMA_DIR:-/app/prisma}
@@ -88,12 +116,12 @@ run_migrations() {
   cid=$(docker create "$image")
   docker cp "$cid:$schema_dir" "$migrate_dir/prisma" >/dev/null
   docker rm "$cid" >/dev/null
-  if ! (dump_if_pending env "${var_name}=${db_url}" npx -y "prisma@${major}" migrate status --schema "$migrate_dir/prisma/schema.prisma"); then
+  if ! (dump_if_pending "$db_url" prisma_migrate status); then
     rm -rf "$migrate_dir"
     exit 1
   fi
   printf '==> aplicando migracoes de %s\n' "$application" >&2
-  if ! env "${var_name}=${db_url}" npx -y "prisma@${major}" migrate deploy --schema "$migrate_dir/prisma/schema.prisma" </dev/null >&2; then
+  if ! prisma_migrate deploy </dev/null >&2; then
     rm -rf "$migrate_dir"
     fail 'Migracao do banco falhou; deploy interrompido antes de trocar o servico.'
   fi

@@ -95,8 +95,8 @@ printf 'CREATE TABLE t (id int);\\n'
         self.assertNotEqual(self.migrate(FALHAR_MIGRACAO='1').returncode, 0)
         self.assertEqual(list(self.work.iterdir()), [])
 
-    def com_dump(self, **env):
-        return self.run_bash('MIGRATE_ENV_FILE=.env.production; MIGRATE_DUMP_DB=loja; MIGRATE_DUMP_DIR="$TEST_ROOT/dumps"; '
+    def com_dump(self, dump_db='teste', **env):
+        return self.run_bash('MIGRATE_ENV_FILE=.env.production; MIGRATE_DUMP_DB=' + dump_db + '; MIGRATE_DUMP_DIR="$TEST_ROOT/dumps"; '
                              'image=imagem; application=loja.exemplo; run_migrations "$TEST_ROOT"', **env)
 
     def arquivos_de_dump(self):
@@ -122,7 +122,7 @@ printf 'CREATE TABLE t (id int);\\n'
         arquivos = self.arquivos_de_dump()
         self.assertEqual(len(arquivos), 1, arquivos)
         self.assertRegex(arquivos[0], r'^pre-migracao-loja\.exemplo-\d{8}-\d{6}\.sql\.gz$')
-        self.assertIn('-u postgres -- pg_dump --no-owner -- loja', (self.root / 'runuser.log').read_text())
+        self.assertIn('-u postgres -- pg_dump --no-owner -- teste', (self.root / 'runuser.log').read_text())
         self.assertIn('dump conferido', result.stderr)
         self.assertTrue((self.root / 'migracao.log').exists())
 
@@ -147,6 +147,67 @@ printf 'CREATE TABLE t (id int);\\n'
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.root / 'runuser.log').exists())
         self.assertFalse((self.root / 'migracao.log').exists())
+
+    def test_banco_da_url_diferente_do_dump_para_antes_do_status(self):
+        # Ressalva 2 da revisao da 241: MIGRATE_DUMP_DB (.conf) e a URL do .env
+        # apontando para bancos diferentes dariam "dump conferido" do banco errado.
+        for pendente in ('0', '1'):
+            with self.subTest(pendente=pendente):
+                result = self.com_dump(dump_db='outro_banco', PENDENTE=pendente)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('nao e o de MIGRATE_DUMP_DB', result.stderr)
+                self.assertNotIn('teste:teste', result.stderr + result.stdout)
+                self.assertFalse((self.root / 'npx.log').exists())
+                self.assertFalse((self.root / 'runuser.log').exists())
+                self.assertFalse((self.root / 'migracao.log').exists())
+                self.assertEqual(self.arquivos_de_dump(), [])
+                self.assertEqual(list(self.work.iterdir()), [])
+
+    def test_variavel_de_banco_ausente_com_dump_ligado_para(self):
+        self.envfile.write_text('OUTRA=1\n')
+        self.stub('npx', '#!/bin/bash\necho chamado >> "$TEST_ROOT/npx.log"\n')
+        result = self.com_dump(PENDENTE='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('nao e o de MIGRATE_DUMP_DB', result.stderr)
+        self.assertFalse((self.root / 'npx.log').exists())
+        self.assertFalse((self.root / 'runuser.log').exists())
+
+    def test_nome_do_banco_extraido_da_url(self):
+        # (URL, banco esperado; '' = nao da para ler e o deploy para)
+        casos = [
+            ('postgresql://u:s@127.0.0.1:5432/lojas', 'lojas'),
+            ('postgresql://u:s@127.0.0.1:5432/lojas?schema=public&connection_limit=5', 'lojas'),
+            ('postgres://u@host/lojas#x', 'lojas'),
+            ('postgresql://u:s%40x@[::1]:5432/lojas_2', 'lojas_2'),
+            ('postgresql://u:s@127.0.0.1:5432/lojas_teste', 'lojas_teste'),
+            ('postgresql://u:s@127.0.0.1:5432/', ''),
+            ('postgresql://u:s@127.0.0.1:5432', ''),
+            ('postgresql://u:s@127.0.0.1:5432/lojas/extra', ''),
+            ('postgresql://u:se/nha@127.0.0.1:5432/lojas', 'lojas'),
+            ('postgresql://u:se?nha@127.0.0.1:5432/lojas', ''),
+            ('lojas', ''),
+            ('', ''),
+        ]
+        for script in (SCRIPT, SCRIPT_LOCAL):
+            funcoes = self.root / ('f-' + script.name)
+            funcoes.write_text(script.read_text().split('\n[[ $EUID == 0 ]]')[0])
+            for url, banco in casos:
+                with self.subTest(script=script.name, url=url):
+                    # Comando de status "true": sem pendencia, a funcao sai com 0 se o nome confere.
+                    r = subprocess.run(['bash', '-c', 'source "$1"; MIGRATE_DUMP_DIR="$TEST_ROOT/dumps"; application=a; '
+                                        'dump_if_pending "$2" true', '_', str(funcoes), url],
+                                       env=dict(self.env, MIGRATE_DUMP_DB=banco or 'lojas'), capture_output=True, text=True)
+                    if banco:
+                        self.assertEqual(r.returncode, 0, r.stderr)
+                        outro = subprocess.run(['bash', '-c', 'source "$1"; MIGRATE_DUMP_DIR="$TEST_ROOT/dumps"; application=a; '
+                                                'dump_if_pending "$2" true', '_', str(funcoes), url],
+                                               env=dict(self.env, MIGRATE_DUMP_DB=banco + 'x'), capture_output=True, text=True)
+                        self.assertNotEqual(outro.returncode, 0)
+                    else:
+                        self.assertNotEqual(r.returncode, 0)
+                        self.assertIn('nao e o de MIGRATE_DUMP_DB', r.stderr)
+                    if url:
+                        self.assertNotIn(url, r.stderr + r.stdout)
 
     def test_sem_opt_in_nao_acessa_docker(self):
         result = self.run_bash('unset MIGRATE_ENV_FILE; run_migrations "$TEST_ROOT"')
@@ -212,6 +273,8 @@ esac
         self.stub('npx', '''#!/bin/bash
 set -eu
 [ "$DATABASE_URL" = 'postgresql://teste:teste@127.0.0.1:5432/teste' ]
+# O que apareceria em `ps`: a linha de comando deste processo.
+tr '\\0' ' ' < /proc/$$/cmdline >> "$TEST_ROOT/cmdline.log"; echo >> "$TEST_ROOT/cmdline.log"
 if [ "${4:-}" = status ]; then
   echo status >> "$TEST_ROOT/ordem.log"
   [ "${PENDENTE:-0}" != 1 ]
@@ -222,6 +285,8 @@ echo migracao >> "$TEST_ROOT/ordem.log"
         self.stub('runuser', '''#!/bin/bash
 set -eu
 echo dump >> "$TEST_ROOT/ordem.log"
+# A URL do banco e so do Prisma: o pg_dump nao pode herdar.
+[ -z "${DATABASE_URL+x}" ] || { echo url-no-ambiente-do-dump >> "$TEST_ROOT/ordem.log"; exit 9; }
 [ "${FALHAR_DUMP:-0}" != 1 ] || exit 3
 printf 'CREATE TABLE t (id int);\\n'
 [ "${DUMP_TRUNCADO:-0}" = 1 ] || printf -- '--\\n-- PostgreSQL database dump complete\\n--\\n'
@@ -232,7 +297,7 @@ printf 'CREATE TABLE t (id int);\\n'
         path.write_text(content)
         path.chmod(0o755)
 
-    def migrate(self, dump_db='loja', **env):
+    def migrate(self, dump_db='teste', **env):
         return subprocess.run(['bash', '-c', 'source ' + shlex.quote(str(self.functions)) + '\n'
                                'MIGRATE_ENV_FILE=.env; MIGRATE_DUMP_DB=' + dump_db + '; MIGRATE_DUMP_DIR="$TEST_ROOT/dumps"; '
                                'image=imagem; application=loja.exemplo; run_migrations "$TEST_ROOT"'],
@@ -278,6 +343,39 @@ printf 'CREATE TABLE t (id int);\\n'
                 self.assertNotIn('migracao', self.ordem())
                 self.assertEqual(self.arquivos_de_dump(), [])
                 self.assertEqual(list(self.work.iterdir()), [])
+
+    def test_banco_da_url_diferente_do_dump_impede_a_migracao(self):
+        for pendente in ('0', '1'):
+            with self.subTest(pendente=pendente):
+                result = self.migrate(dump_db='outro_banco', PENDENTE=pendente)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('nao e o de MIGRATE_DUMP_DB', result.stderr)
+                self.assertNotIn('teste:teste', result.stderr + result.stdout)
+                self.assertFalse((self.root / 'ordem.log').exists())
+                self.assertEqual(self.arquivos_de_dump(), [])
+                self.assertEqual(list(self.work.iterdir()), [])
+
+    def test_url_do_banco_nao_aparece_na_linha_de_comando(self):
+        # Ressalva 5: como argumento do `env` a senha ficava visivel em `ps`.
+        result = self.migrate(PENDENTE='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        linhas = (self.root / 'cmdline.log').read_text().splitlines()
+        self.assertEqual(len(linhas), 2, linhas)
+        self.assertIn('migrate status', linhas[0])
+        self.assertIn('migrate deploy', linhas[1])
+        for linha in linhas:
+            self.assertNotIn('postgresql://', linha)
+            self.assertNotIn('teste:teste', linha)
+        self.assertNotIn('env "${var_name}=', SCRIPT_LOCAL.read_text())
+
+    def test_variavel_de_banco_com_nome_estranho_e_recusada(self):
+        r = subprocess.run(['bash', '-c', 'source ' + shlex.quote(str(self.functions)) + '\n'
+                            'MIGRATE_ENV_FILE=.env; MIGRATE_DB_VAR="X; touch $TEST_ROOT/invadiu"; '
+                            'image=imagem; application=loja.exemplo; run_migrations "$TEST_ROOT"'],
+                           env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse((self.root / 'invadiu').exists())
+        self.assertFalse((self.root / 'ordem.log').exists())
 
     def test_dump_que_nao_chega_ao_nome_final_impede_a_migracao(self):
         # Aqui a chamada fica dentro de "if !", onde o "set -e" nao vale.

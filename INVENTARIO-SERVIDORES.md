@@ -508,8 +508,14 @@ roda; dump que falha para o deploy sem migrar. Sem migração pendente não há 
   apagados do R2** pela rotação local. O `sync-drive.sh` citado acima não foi encontrado em
   08/10/2026: `/opt/avila-rclone` não existe e nenhum arquivo de `/etc/cron.d` cita `drive`.
 - Pendência: o `/usr/local/sbin/avila-deploy` (`scripts/deploy-container.sh`, usado pelo
-  GitHub Actions, parado por cobrança) **não foi atualizado** e continua na versão de
-  18/09/2026, sem o dump. Instalar quando o Actions voltar, antes do primeiro deploy por lá.
+  GitHub Actions) **não foi atualizado** e continua na versão de 18/09/2026, sem o dump.
+  **Correção de 08/10/2026 (tarefa 247): o Actions não está parado.** O `journalctl` do
+  `applications` mostra 114 execuções do `avila-deploy` pelo `gha-deploy` de 01/10 a 08/10,
+  39 do `lojas.avilaops.com` (8 em 08/10, a última às 17:10 UTC, `image.yml` por digest do
+  GHCR). Enquanto o `lojas` for publicado pelo Actions, a migração dele roda **sem** dump:
+  nenhum `pre-migracao-*` existe em `/opt/backups/db` nem no R2. A versão do repositório tem
+  131 linhas a mais que a instalada e nunca rodou em produção; instalar é tarefa própria, com
+  revisão do que mudou desde 18/09 (comandos no `BUILD-MANUAL.md`).
 - Volta: `/opt/backups/avila-deploy-local.bak-20261008-t241` e
   `/opt/backups/lojas.avilaops.com.conf.bak-20261008-t241`. Desligar só o dump: apagar a
   linha `MIGRATE_DUMP_DB=lojas` do `.conf`.
