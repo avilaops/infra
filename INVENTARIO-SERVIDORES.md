@@ -352,6 +352,8 @@ Conferido em 07/10/2026 com `systemctl list-units --type=service --state=running
 | `redis-server` | Redis do host | `127.0.0.1:6379` |
 | `cloudflared` | túnel Cloudflare | `127.0.0.1:20241` |
 | `fail2ban` | bloqueio de força bruta | — |
+| `n8n` | n8n nativo de `n8n.avilaops.com` (desde 08/10/2026) | `/opt/n8n` → `127.0.0.1:5678`; broker de runners em `127.0.0.1:5680` |
+| `avila-n8n-modules` | módulos Ávila do n8n (Control Plane), atrás de `n8n.avilaops.com/avila*` | `/opt/n8n/modules` → `127.0.0.1:5679` (`LISTEN_HOST=127.0.0.1` na unit) |
 
 Saíram desde 16/08/2026: `agricola-medusa`, `agricola-storefront` e
 `jurisflow-poc` (sem unit rodando, sem diretório em `/opt`, portas `9002`,
@@ -572,6 +574,15 @@ Só em `127.0.0.1`: `445` (Samba), `2019` (admin do Caddy), `3004`, `3005`,
 Só no túnel: `10.10.0.2:445` (Samba) e `10.10.0.2:9100` (node_exporter).
 
 Na ponte do Docker: `172.17.0.1:5432` (Postgres do host para os contêineres).
+
+Atualização de 08/10/2026 (tarefa 238): o n8n nativo acrescentou `5678`, `5679`
+e `5680`, as três só em `127.0.0.1`. A `5679` (`avila-n8n-modules`) escutava em
+`0.0.0.0` desde a instalação, fechada apenas pelo ufw; passou para `127.0.0.1`
+com `LISTEN_HOST=127.0.0.1` na unit e o `listen` do `src/server.ts` lendo a
+variável (repositório `avilaops/n8n.avilaops.com`). Cópias de antes em
+`/opt/backups/`: `avila-n8n-modules.service.bak-20261008-t238`,
+`n8n-modules-dist-server.js.bak-20261008-t238` e
+`n8n-modules-src-server.ts.bak-20261008-t238`.
 
 ---
 
