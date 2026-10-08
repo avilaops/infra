@@ -532,13 +532,21 @@ roda; dump que falha para o deploy sem migrar. Sem migração pendente não há 
   `/opt/backups/lojas.avilaops.com.conf.bak-20261008-t241`. Desligar só o dump: apagar a
   linha `MIGRATE_DUMP_DB=lojas` do `.conf`.
 
-### Script manual que apaga: `/root/limpeza-fase1.sh` (tarefa 236, 08/10/2026)
+### Script manual que apaga: `limpeza-fase1.sh`, arquivado em `/opt/arquivo` (tarefas 236 e 249, 08/10/2026)
 
-Não está em cron, timer nem unit, e nenhum outro script o chama (conferido em 08/10/2026
-com `grep` em `/etc/cron*`, `/var/spool/cron`, `/etc/systemd`, `/usr/local/bin`,
-`/opt/avilaops-scripts` e `/root/*.sh`). Rodou uma vez, em 27/08/2026 14:27 UTC
-(`/var/log/limpeza-avilaops.log`); os alvos de caminho fixo dele já não existem. Continua
-executável (755, root) e **não é para rodar de novo**: fora do agendamento ele ainda apaga.
+**Estado desde a tarefa 249 (08/10/2026 19:34 UTC):** o script saiu de `/root` e está
+arquivado em **`/opt/arquivo/limpeza-fase1-20261008.sh`**, modo 600 (sem bit de execução),
+dono root, sha256 `f2d0c3e2…cb7c59` (igual antes e depois de mover; o conteúdo não foi
+editado). `/root/limpeza-fase1.sh` não existe mais. Não foi rodado nem apagado.
+
+Não está agendado: não está em cron, timer nem unit, e nenhum outro script o chama
+(conferido em 08/10/2026, antes de mover, com `crontab -l` do root, `grep` em `/etc/cron*`,
+`/var/spool/cron`, `/etc/systemd`, `/usr/lib/systemd/system`, `/usr/local/bin`,
+`/usr/local/sbin`, `/root` e `/opt`, `systemctl list-timers --all` e `atq`). Rodou uma vez,
+em 27/08/2026 14:27 UTC (`/var/log/limpeza-avilaops.log`); os alvos de caminho fixo dele já
+não existem. **Não é para rodar de novo: rodado à mão (`bash /opt/arquivo/limpeza-fase1-20261008.sh`)
+ele ainda apaga** as 14 cópias de retorno listadas em "Segue no alcance", mais caches e logs
+rotacionados. Tirar o bit de execução e mudar o caminho só evita a execução por engano.
 
 - Alcance do trecho ".env e Caddyfile de sobra": `find /opt /root /var/www -maxdepth 4` por
   `.env.bak*`, `.env.*.bak*`, `.env.backup-*`, `.env.*.before-*`, `.env.quebrado.bak`,
@@ -549,9 +557,14 @@ executável (755, root) e **não é para rodar de novo**: fora do agendamento el
 - O que mudou: esse `find` ganhou `\( -path /opt/backups -prune \) -o` e `-print` explícito,
   então não desce mais em `/opt/backups`. Ensaio só de listagem depois da mudança: 14
   arquivos, nenhum em `/opt/backups`. Nada foi apagado e o script não foi executado.
-- Volta: `/root/limpeza-fase1.sh.antes-t236-20261008` (modo 600 de propósito, para a versão
-  antiga não ser executada por engano; sha256 `71b2a6d0…`).
-- **Segue no alcance** (não mexido nesta tarefa): as cópias `.env*.bak*` e
+- A contagem "restantes" no fim do script (linha 73) ainda desce em `/opt/backups`, mas só
+  imprime um número (`find … | wc -l`). Com o script arquivado, não foi corrigida.
+- Versão anterior à 236: `/root/limpeza-fase1.sh.antes-t236-20261008` (modo 600 de propósito,
+  para não ser executada por engano; sha256 `71b2a6d0…`). Continua em `/root`; **é a versão
+  que ainda desce em `/opt/backups`** e não deve voltar ao uso.
+- Volta da 249: `mv /opt/arquivo/limpeza-fase1-20261008.sh /root/limpeza-fase1.sh && chmod 755
+  /root/limpeza-fase1.sh` (não há motivo previsto para fazer isso).
+- **Segue no alcance** (14 arquivos no ensaio da 236; não mexidos): as cópias `.env*.bak*` e
   `docker-compose.yml.bak*` ao lado dos serviços (`/opt/cifra`, `/opt/minas-espetinhos`,
   `/opt/erp`, `/opt/auth-avilaops`, `/opt/tms-avilaops-com`, `/opt/app-avilaops`), o
   `Caddyfile.bak-20261006-t148-…` de `/opt/arquivo/sorroche-20261006/` e os dois
