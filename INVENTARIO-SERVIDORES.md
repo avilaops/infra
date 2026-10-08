@@ -121,6 +121,12 @@ Conferido em 07/10/2026 com `caddy adapt --config /etc/caddy/Caddyfile` (44
 hostnames) e leitura dos blocos: 28 no `Caddyfile` (um deles o genérico
 `https://`) e 2 em `/etc/caddy/lojas.d/*.caddy`.
 
+Atualização de 08/10/2026 (tarefa 252): `n8n.avilaops.com` passou a ser servido
+por este Caddy (bloco próprio no `Caddyfile`, n8n nativo da seção 4) e o
+registro A resolve para `178.105.82.48` (`dig` em `1.1.1.1` e `8.8.8.8`). O
+`caddy adapt` dessa data lista 48 hostnames; a contagem e as tabelas abaixo são
+as de 07/10/2026 e não foram refeitas.
+
 ### Avila Ops
 
 | Domínio | Destino |
@@ -328,15 +334,19 @@ dois `minas-espetinhos-*` em 07/10/2026 (tarefa 153).
 
 `edge` (`172.31.0.0/24`), `app-avilaops_default`, `cifra_default`,
 `minas-espetinhos_default`,
-`despolarizamed_default`, `saudepet_default`, `n8n_default` (sem contêiner) e as
+`despolarizamed_default`, `saudepet_default` e as
 padrão `bridge`, `host`, `none`. `erp`, `lojas-avilaops` e `node_exporter` estão
-na `bridge`.
+na `bridge`. A `n8n_default` (sem contêiner) foi removida em 08/10/2026 com as
+sobras do n8n em container.
 
 ---
 
 ## 4. Produção — serviços fora do Docker
 
 Conferido em 07/10/2026 com `systemctl list-units --type=service --state=running`.
+As linhas `n8n` e `avila-n8n-modules` são de 08/10/2026 (tarefas 238 e 252,
+conferidas com `systemctl is-active` e `ss -ltnp`); o restante da tabela não foi
+refeito nessa data.
 
 | Serviço | O que é | Onde |
 | --- | --- | --- |
@@ -353,7 +363,7 @@ Conferido em 07/10/2026 com `systemctl list-units --type=service --state=running
 | `cloudflared` | túnel Cloudflare | `127.0.0.1:20241` |
 | `fail2ban` | bloqueio de força bruta | — |
 | `n8n` | n8n nativo de `n8n.avilaops.com` (desde 08/10/2026) | `/opt/n8n` → `127.0.0.1:5678`; broker de runners em `127.0.0.1:5680` |
-| `avila-n8n-modules` | módulos Ávila do n8n (Control Plane), atrás de `n8n.avilaops.com/avila*` | `/opt/n8n/modules` → `127.0.0.1:5679` (`LISTEN_HOST=127.0.0.1` na unit) |
+| `avila-n8n-modules` | módulos Ávila do n8n (Control Plane), atrás de `n8n.avilaops.com/avila*` | `/opt/n8n/modules` → `127.0.0.1:5679` (`LISTEN_HOST=127.0.0.1` na unit; desde a tarefa 252 o padrão do código também é `127.0.0.1`) |
 
 Saíram desde 16/08/2026: `agricola-medusa`, `agricola-storefront` e
 `jurisflow-poc` (sem unit rodando, sem diretório em `/opt`, portas `9002`,
@@ -633,7 +643,7 @@ Conferido em 07/10/2026 com `ls` e `du -sh`.
 | `app-avilaops` | 323 MB |
 | `despolarizamed` | 110 MB |
 | `cifra` | 51 MB |
-| `n8n` | 16 MB (parado de propósito em 19/09/2026, ver `LEIA-ANTES-DE-SUBIR.txt`) |
+| `n8n` | 2,9 GB em 08/10/2026: **em uso** desde essa data pelo n8n nativo (`app`, `modules`, `override`, `arquivos`, `n8n.env`; seção 4). Em 07/10/2026 eram 16 MB do n8n em container, parado desde 19/09/2026; essas sobras e o `LEIA-ANTES-DE-SUBIR.txt` foram removidos |
 | `minas-espetinhos` | 16 MB (Comandeiro, religado em 07/10/2026) |
 | `erp` | 12 MB |
 | `auth-avilaops` | 1,0 MB |
@@ -675,8 +685,10 @@ As cópias antigas (`*.bak-*`, `*.old`) de 16/08/2026 não existem mais.
 **Não reconferido em 07/10/2026: não há acesso SSH a este servidor a partir da
 equipe.** O que se viu de fora nessa data: sem resposta a ping e a `22/tcp`;
 último handshake da WireGuard com a produção há 29 dias; `obs.avilaops.com` sem
-registro DNS; `n8n.avilaops.com` aponta para `204.168.249.111` (outro servidor)
-e responde 502. Tudo abaixo é o levantamento de 16/08/2026 e pode não existir
+registro DNS; `n8n.avilaops.com` apontava para `204.168.249.111` (outro servidor)
+e respondia 502. Desde 08/10/2026 `n8n.avilaops.com` resolve para
+`178.105.82.48` (produção) e é atendido pelo n8n nativo de lá (seções 2 e 4);
+não depende mais deste servidor. Tudo abaixo é o levantamento de 16/08/2026 e pode não existir
 mais.
 
 ### Containers (10 rodando, 1 parado)
@@ -812,9 +824,10 @@ Volumes: `n8n_caddy-config`, `n8n_caddy-data`, `n8n_n8n-data`,
 
 ### Sujeira
 
-10. **`/var/www/cifra` com 1006 MB**, `/opt/n8n`,
-    `/opt/mello` e a rede `n8n_default` sem contêiner; arquivos
+10. **`/var/www/cifra` com 1006 MB** e `/opt/mello`; arquivos
     `.retirado-20260919` e `.bak-20260916-160241` em `/etc/avilaops/deploy`.
+    O `/opt/n8n` e a rede `n8n_default` saíram desta lista em 08/10/2026: a
+    pasta está em uso pelo n8n nativo e a rede foi removida.
 
 ### Resolvidos desde 16/08/2026
 
