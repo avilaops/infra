@@ -1,0 +1,72 @@
+name: Implantar imagem por SSH
+
+on:
+  workflow_call:
+    inputs:
+      application:
+        type: string
+        required: true
+      image:
+        type: string
+        required: true
+      port:
+        type: number
+        default: 22
+    secrets:
+      DEPLOY_HOST:
+        required: true
+      DEPLOY_USER:
+        required: true
+      DEPLOY_SSH_KEY:
+        required: true
+      DEPLOY_KNOWN_HOSTS:
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: deploy-production-${{ inputs.application }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - name: Enviar imagem ao servidor
+        env:
+          APPLICATION: ${{ inputs.application }}
+          IMAGE: ${{ inputs.image }}
+          DEPLOY_PORT: ${{ inputs.port }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$APPLICATION" =~ ^[a-z0-9][a-z0-9.-]*$ ]]
+          [[ "$IMAGE" =~ ^ghcr\.io/(avilaops|avilainc)/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$ ]]
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$DEPLOY_PORT" =~ ^[0-9]{1,5}$ ]]
+          (( DEPLOY_PORT > 0 && DEPLOY_PORT < 65536 ))
+          temporary_ssh=$(mktemp -d)
+          trap 'rm -rf "$temporary_ssh"' EXIT
+          chmod 700 "$temporary_ssh"
+          printf '%s\n' "$SSH_KEY" > "$temporary_ssh/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$temporary_ssh/known_hosts"
+          chmod 600 "$temporary_ssh/key" "$temporary_ssh/known_hosts"
+          printf '%s\n' "$GHCR_TOKEN" | ssh -T -i "$temporary_ssh/key" -p "$DEPLOY_PORT" \
+            -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$temporary_ssh/known_hosts" \
+            -o ConnectTimeout=20 -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "deploy $APPLICATION $IMAGE"
+

@@ -1,0 +1,30 @@
+server:
+  http_listen_port: 9081
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions-obs.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Logs do cron de auditoria SEO (run-seo-audits.sh).
+  # O arquivo é criado/atualizado pelo crontab:
+  #   0 6 * * * ... /opt/scripts/run-seo-audits.sh >> /var/log/seo-audit-cron.log 2>&1
+  - job_name: seo-audit-cron
+    static_configs:
+      - targets: ["localhost"]
+        labels:
+          job: seo-audit-cron
+          host: obs-vps
+          __path__: /var/log/seo-audit-cron.log
+
+  # Logs do próprio cron system (opcional — descomente se quiser)
+  # - job_name: syslog
+  #   static_configs:
+  #     - targets: ["localhost"]
+  #       labels:
+  #         job: syslog
+  #         host: obs-vps
+  #         __path__: /var/log/syslog

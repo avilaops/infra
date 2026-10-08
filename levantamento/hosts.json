@@ -1,0 +1,22 @@
+{
+  "chave_ssh": "~/.ssh/hetzner_avilaops",
+  "servidores": [
+    {
+      "nome": "producao",
+      "host": "178.105.82.48",
+      "usuario": "root",
+      "descricao": "ubuntu-4gb-nbg1-1 | Hetzner CX23 | 40 GB raiz + volume de 40 GB para o Docker | eu-central"
+    },
+    {
+      "nome": "infra",
+      "host": "23.88.60.193",
+      "usuario": "root",
+      "descricao": "infra | Hetzner CX23 | 40 GB | observabilidade e n8n | eu-central"
+    }
+  ],
+  "limites": {
+    "disco_alerta_pct": 85,
+    "ram_livre_alerta_pct": 15,
+    "certificado_alerta_dias": 21
+  }
+}

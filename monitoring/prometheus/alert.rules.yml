@@ -1,0 +1,88 @@
+groups:
+  - name: blackbox
+    rules:
+      - alert: ProbeDown
+        expr: probe_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} está fora do ar"
+          description: "O probe HTTP para {{ $labels.instance }} falha há mais de 5 minutos."
+
+      - alert: SSLCertExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 14
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Certificado SSL de {{ $labels.instance }} expira em breve"
+          description: "Menos de 14 dias para o certificado SSL de {{ $labels.instance }} expirar."
+
+      - alert: HighResponseTime
+        expr: probe_duration_seconds > 3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} respondendo lento"
+          description: "Tempo de resposta acima de 3s por mais de 10 minutos em {{ $labels.instance }}."
+
+  - name: infra
+    rules:
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Uso de memória alto em {{ $labels.instance_name }}"
+          description: "Mais de 90% da RAM em uso por mais de 10 minutos."
+
+      - alert: LowDiskSpace
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pouco espaço em disco em {{ $labels.instance_name }}"
+          description: "Menos de 10% de disco livre em / por mais de 15 minutos."
+
+      - alert: InstanceDown
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Exporter {{ $labels.job }} em {{ $labels.instance }} não responde"
+          description: "O Prometheus não consegue fazer scrape de {{ $labels.instance }} (job {{ $labels.job }}) há mais de 5 minutos."
+
+  - name: seo
+    rules:
+      - alert: DomainExpiringSoon
+        expr: avilaops_domain_expiry_days_remaining < 30
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Domínio {{ $labels.fqdn }} expira em breve"
+          description: "O domínio {{ $labels.fqdn }} expira em {{ $value | printf \"%.0f\" }} dias. Renove antes que isso se torne crítico."
+
+      - alert: DomainExpiryCritical
+        expr: avilaops_domain_expiry_days_remaining < 7
+        for: 1h
+        labels:
+          severity: critical
+        annotations:
+          summary: "URGENTE: domínio {{ $labels.fqdn }} expira em {{ $value | printf \"%.0f\" }} dias"
+          description: "O domínio {{ $labels.fqdn }} está prestes a expirar. Renove IMEDIATAMENTE para evitar interrupção."
+
+      - alert: SeoAuditNotRunning
+        # Dispara se a auditoria não rodou em mais de 25 horas (folga de 1h além do cron diário)
+        expr: (time() - avilaops_seo_audit_last_run_timestamp_seconds) > 90000
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Auditoria de SEO não rodou em {{ $labels.fqdn }}"
+          description: "A auditoria técnica de SEO de {{ $labels.fqdn }} não foi executada há mais de 25 horas. Verificar cron e logs em /var/log/seo-audit-cron.log no VPS de observabilidade."

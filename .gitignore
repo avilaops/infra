@@ -1,0 +1,35 @@
+# === Segredos ===
+# Padrao abrangente: .env, .env.producao, .env.grafana, .env.n8n, qualquer um.
+# Cuidado ao editar: "*.env" NAO cobre ".env.grafana" (nao termina em .env),
+# e foi por isso que esse arquivo quase versionou a chave da API do n8n.
+.env*
+*.env
+!.env.example
+
+# Tokens e chaves avulsos
+.mcp.json
+*_PRIVADA.txt
+*_PRIVADA.md
+*.pem
+*.key
+*.p12
+*token*
+!**/README.md
+
+# Segredos do Prometheus — mantem so o README de instrucoes
+prometheus/secrets/*
+!prometheus/secrets/README.md
+
+# === Ruido ===
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+
+# Dados de runtime que nao pertencem ao repositorio
+data/
+*.tar.gz
+
+# Credenciais OAuth baixadas do Google Console (contem client_secret).
+client_secret_*.json
+__pycache__/

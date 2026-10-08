@@ -1,0 +1,81 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - "alert.rules.yml"
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "node-exporter-local"
+    static_configs:
+      - targets: ["node_exporter:9100"]
+        labels:
+          instance_name: "obs-vps"
+
+  # VPS de produção, acessado via túnel WireGuard (ver README para IP do túnel).
+  - job_name: "node-exporter-producao"
+    static_configs:
+      - targets: ["10.10.0.2:9100"]
+        labels:
+          instance_name: "producao-vps"
+
+  - job_name: "cadvisor-producao"
+    static_configs:
+      - targets: ["10.10.0.2:8080"]
+        labels:
+          instance_name: "producao-vps"
+
+  # Métricas de SEO/auditoria expostas pelo app.avilaops.com (score SEO,
+  # PageSpeed, links quebrados, Bing/IndexNow, expiração de domínio).
+  # avilaops.com é o domínio canônico desde 2026-08-14 (app.avila.inc segue
+  # respondendo em paralelo, sem redirect, mesma instância do app).
+  # O token fica fora deste arquivo — ver metrics-token/README na pasta.
+  - job_name: "app-avila-inc-seo"
+    scrape_interval: 5m
+    scheme: https
+    metrics_path: /api/metrics
+    authorization:
+      credentials_file: /etc/prometheus/secrets/app-avila-inc-metrics-token
+    static_configs:
+      - targets: ["app.avilaops.com"]
+        labels:
+          instance_name: "app-avila-inc"
+
+  # ERP Ávila Ops (D:\ERP) — endpoint /metrics já implementado e testado
+  # localmente (2026-08-13), mas o projeto ainda não tem deploy em produção.
+  # Descomentar e ajustar o target quando o ERP for implantado; o token vai
+  # em prometheus/secrets/erp-metrics-token (mesmo padrão do app-avila-inc-seo).
+  # - job_name: "avila-erp"
+  #   scrape_interval: 30s
+  #   scheme: https
+  #   metrics_path: /metrics
+  #   authorization:
+  #     credentials_file: /etc/prometheus/secrets/erp-metrics-token
+  #   static_configs:
+  #     - targets: ["erp.avilaops.com"]
+  #       labels:
+  #         instance_name: "avila-erp"
+
+  - job_name: "blackbox-http"
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    file_sd_configs:
+      - files:
+          - "targets/domains.yml"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox_exporter:9115

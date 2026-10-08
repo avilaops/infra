@@ -1,0 +1,7 @@
+{$OBS_DOMAIN} {
+	reverse_proxy grafana:3000
+}
+
+{$N8N_DOMAIN} {
+	reverse_proxy n8n:5678
+}

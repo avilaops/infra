@@ -1,0 +1,35 @@
+# Lista de domínios do portfólio monitorados via blackbox_exporter (http_2xx).
+# Domínios com DNS ainda pendente aparecem como falha até serem corrigidos —
+# isso é intencional, serve de lembrete visual no Grafana.
+#
+# Edite esta lista conforme o portfólio muda; não requer reiniciar o Prometheus
+# (file_sd_configs recarrega automaticamente).
+
+- targets:
+    - "https://avilaops.com" # canônico desde 2026-08-14 (avila.inc agora redireciona pra cá)
+    - "https://app.avilaops.com" # avila.inc segue respondendo em paralelo (sem redirect ainda)
+    - "https://cliente.avilaops.com" # avila.inc segue respondendo em paralelo (sem redirect ainda)
+    - "https://brilhax.com"
+    - "https://app.brilhax.com"
+    - "https://cifrainssdeobras.com.br"
+    - "https://app.cifrainssdeobras.com.br"
+    - "https://agricola.avilaops.com"
+    - "https://api-agricola.avilaops.com/health" # API pura, sem rota / — verificada 2026-08-12
+    - "https://saudepet.app.br"
+    - "https://admin.saudepet.app.br"
+    - "https://seteeseteengenharia.com.br"
+    - "https://tuitecnologia.com.br"
+    - "https://gabrielarincao.com.br"
+    - "https://maprojetos.com.br"
+    - "https://arxisvr.avilaops.com"
+    - "https://api.arxisvr.avilaops.com"
+    - "https://sorroche.beauty" # publicado (confirmado pelo usuário 2026-08-14)
+    - "https://crm.avilaops.com" # Agenda CRM — confirmado no ar (2026-08-14)
+    - "https://irlquest.avilaops.com" # landing page Next.js — confirmado no ar (2026-08-14)
+    - "https://jobs.avilaops.com" # site de carreiras — confirmado no ar (2026-08-14)
+    - "https://docs.avilaops.com" # docs públicas @avilaops/* — confirmado no ar (2026-08-14)
+    # erp.avilaops.com e mail.avilaops.com NÃO adicionados: sem resposta HTTP
+    # ainda (000) em 2026-08-14 — CI/deploy não publica em produção de fato.
+    # Adicionar quando responderem de verdade, pra não gerar alerta permanente.
+  labels:
+    group: "portfolio"

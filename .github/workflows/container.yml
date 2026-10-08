@@ -1,0 +1,107 @@
+name: Construir imagem no GHCR
+
+on:
+  workflow_call:
+    inputs:
+      build-args:
+        type: string
+        default: ''
+      context:
+        type: string
+        default: .
+      dockerfile:
+        type: string
+        default: Dockerfile
+      target:
+        type: string
+        default: ''
+      image-suffix:
+        type: string
+        default: ''
+      publish:
+        type: boolean
+        default: false
+    secrets:
+      JOBS_API_URL:
+        required: false
+      SERVICE_JWT_SECRET:
+        required: false
+      NEXT_PUBLIC_GTM_ID:
+        required: false
+      NEXT_PUBLIC_GA_MEASUREMENT_ID:
+        required: false
+    outputs:
+      image:
+        description: Imagem imutavel para o deploy
+        value: ${{ jobs.build.outputs.image }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.result.outputs.image }}
+    steps:
+      - name: Obter codigo do commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Validar publicacao
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SUFFIX: ${{ inputs.image-suffix }}
+        run: |
+          set -euo pipefail
+          [[ "$SUFFIX" =~ ^(-[a-z0-9][a-z0-9.-]*)?$ ]]
+          if [[ "$PUBLISH" == true ]]; then
+            [[ "$GITHUB_EVENT_NAME" != pull_request* ]]
+            [[ "$GITHUB_REF" == "refs/heads/$DEFAULT_BRANCH" ]]
+          fi
+          printf 'IMAGE_NAME=ghcr.io/%s%s\n' "${GITHUB_REPOSITORY,,}" "$SUFFIX" >> "$GITHUB_ENV"
+      - name: Preparar Docker
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Autenticar no GHCR
+        if: inputs.publish
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Construir e validar imagem
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          target: ${{ inputs.target }}
+          platforms: linux/amd64
+          push: ${{ inputs.publish }}
+          tags: ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            ${{ inputs.build-args }}
+            NEXT_PUBLIC_GTM_ID=${{ secrets.NEXT_PUBLIC_GTM_ID }}
+            NEXT_PUBLIC_GA_MEASUREMENT_ID=${{ secrets.NEXT_PUBLIC_GA_MEASUREMENT_ID }}
+          secrets: |
+            "JOBS_API_URL=${{ secrets.JOBS_API_URL }}"
+            "SERVICE_JWT_SECRET=${{ secrets.SERVICE_JWT_SECRET }}"
+          cache-from: type=gha,scope=container${{ inputs.image-suffix }}
+          cache-to: type=gha,mode=max,scope=container${{ inputs.image-suffix }}
+      - name: Identificar imagem publicada
+        if: inputs.publish
+        id: result
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          printf 'image=%s@%s\n' "$IMAGE_NAME" "$DIGEST" >> "$GITHUB_OUTPUT"

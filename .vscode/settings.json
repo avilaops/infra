@@ -1,0 +1,62 @@
+{
+  // ── Visibilidade das alterações ───────────────────────────────────────────
+  // O objetivo destas opções é uma só: nada muda no repositório sem aparecer.
+
+  // Marca no explorador e na régua todo arquivo alterado, e mostra no gutter
+  // exatamente quais linhas entraram, saíram ou mudaram.
+  "git.decorations.enabled": true,
+  "scm.diffDecorations": "all",
+  "scm.diffDecorationsGutterVisibility": "always",
+  "scm.alwaysShowRepositories": true,
+  "scm.countBadge": "all",
+
+  // Revela no explorador o arquivo que acabou de ser editado — se algo for
+  // alterado, a árvore pula para ele em vez de a mudança passar despercebida.
+  "explorer.autoReveal": true,
+
+  // A Timeline (clique num arquivo → aba Timeline) passa a mostrar o histórico
+  // de commits daquele arquivo específico, além do histórico local de edições.
+  "timeline.excludeSources": [],
+
+  // Busca alterações remotas sozinho, para o repositório não ficar defasado
+  // em silêncio.
+  "git.autofetch": true,
+  "git.autofetchPeriod": 180,
+
+  // Nunca commitar sem revisar: desliga o atalho que commita tudo que está
+  // alterado sem passar pelo stage.
+  "git.enableSmartCommit": false,
+  "git.confirmSync": true,
+  "git.postCommitCommand": "none",
+
+  // Salvamento manual: um arquivo alterado fica marcado como sujo até você
+  // decidir gravar, em vez de mudar sozinho embaixo de você.
+  "files.autoSave": "off",
+
+  // ── Higiene de arquivo ────────────────────────────────────────────────────
+  // Shell script com CRLF não roda no servidor: quebra com "bad interpreter".
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+
+  "[shellscript]": {
+    "files.eol": "\n"
+  },
+
+  // ── Ruído fora do caminho ─────────────────────────────────────────────────
+  // Escondido do explorador, mas NÃO ignorado pelo git: continua aparecendo
+  // como alteração se mudar.
+  "files.exclude": {
+    "**/node_modules": true,
+    "**/.git": true
+  },
+
+  // Não indexa o que não é fonte, para a busca continuar rápida.
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/*.tar.gz": true
+  },
+
+  // Segredos nunca aparecem em sugestão de arquivo aberto por engano.
+  "search.useIgnoreFiles": true
+}

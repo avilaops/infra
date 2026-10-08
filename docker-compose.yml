@@ -1,0 +1,143 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      - OBS_DOMAIN=${OBS_DOMAIN:?defina OBS_DOMAIN no .env}
+      - N8N_DOMAIN=${N8N_DOMAIN:?defina N8N_DOMAIN no .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./monitoring/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - default
+      - n8n_default
+    depends_on:
+      - grafana
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus/alert.rules.yml:/etc/prometheus/alert.rules.yml
+      - ./monitoring/prometheus/targets:/etc/prometheus/targets
+      - ./monitoring/prometheus/secrets:/etc/prometheus/secrets:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    expose:
+      - "9090"
+
+  blackbox_exporter:
+    image: prom/blackbox-exporter:latest
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus/blackbox.yml:/etc/blackbox_exporter/config.yml
+    expose:
+      - "9115"
+
+  node_exporter:
+    image: prom/node-exporter:latest
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    expose:
+      - "9100"
+
+  alertmanager-config-init:
+    image: alpine:3.20
+    env_file:
+      - .env
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml.template:/template/alertmanager.yml.template:ro
+      - alertmanager-config:/out
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "apk add --no-cache gettext >/dev/null && envsubst < /template/alertmanager.yml.template > /out/alertmanager.yml"
+    restart: "no"
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    restart: unless-stopped
+    depends_on:
+      alertmanager-config-init:
+        condition: service_completed_successfully
+    volumes:
+      - alertmanager-config:/etc/alertmanager
+      - alertmanager-data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    expose:
+      - "9093"
+
+  loki:
+    image: grafana/loki:latest
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/local-config.yaml
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    # Expõe na interface do túnel WireGuard para o Promtail do VPS de produção
+    # alcançar via 10.10.0.1:3100. Não expõe em 0.0.0.0 (não público).
+    ports:
+      - "10.10.0.1:3100:3100"
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?defina GRAFANA_ADMIN_PASSWORD no .env}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SERVER_ROOT_URL=https://${OBS_DOMAIN:-obs.avilaops.com}
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+    expose:
+      - "3000"
+
+  # Promtail local: coleta logs do cron de SEO (/var/log/seo-audit-cron.log)
+  # e envia para o Loki via rede Docker interna. Não precisa de porta pública.
+  promtail-obs:
+    image: grafana/promtail:latest
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/loki/promtail-obs-config.yml:/etc/promtail/config.yml
+      - /var/log:/var/log:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+
+volumes:
+  caddy-data:
+  caddy-config:
+  prometheus-data:
+  alertmanager-config:
+  alertmanager-data:
+  loki-data:
+  grafana-data:
+
+networks:
+  default:
+  n8n_default:
+    external: true

@@ -1,0 +1,7 @@
+# A saida do levantamento mapeia dominios, bancos, roles, portas abertas e a
+# posicao exata de cada segredo. Nao contem o valor de nenhum segredo, mas e um
+# mapa da infraestrutura: fica fora do versionamento por padrao.
+# Se este repositorio for privado e voce quiser historico para comparar execucoes,
+# remova as duas linhas abaixo.
+saida/
+ULTIMO-RELATORIO.md
