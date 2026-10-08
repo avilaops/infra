@@ -489,7 +489,8 @@ família aos 7 dias. Só o escolhido de cada família passa pelo `gzip -t`.
 Cópia versionada e teste em `applications/` deste repositório (tarefa 186).
 
 **Família `pre-migracao-*` (08/10/2026, tarefa 241).** O `/usr/local/sbin/avila-deploy-local`
-(cópia de `scripts/deploy-container-local.sh`, commit `61cd0c1`) faz `pg_dump` do banco
+(cópia de `scripts/deploy-container-local.sh`; desde 08/10/2026 19:10 UTC a do commit
+`fbba3e0`, tarefa 247, sha256 `ff66f321…d7fbd`, antes a do `61cd0c1`) faz `pg_dump` do banco
 antes de aplicar migração pendente, para os destinos cujo `.conf` define
 `MIGRATE_DUMP_DB`. Hoje só o `lojas.avilaops.com.conf` define (`MIGRATE_DUMP_DB=lojas`).
 O arquivo sai em `/opt/backups/db/pre-migracao-<aplicação>-AAAAMMDD-HHMMSS.sql.gz`, root,
@@ -503,9 +504,14 @@ roda; dump que falha para o deploy sem migrar. Sem migração pendente não há 
   como uma família: o mais recente com conteúdo fica, os outros saem com mais de 7 dias.
   Não há teto por quantidade: cada deploy que encontra pendência gera um dump, inclusive
   tentativa repetida.
-- Saída do servidor: o `/usr/local/bin/sync-r2.sh` copia `*.sql.gz` de `/opt/backups/db`
-  para o R2 às 4h com `rclone copy`, então os `pre-migracao-*` vão junto e **não são
-  apagados do R2** pela rotação local. O `sync-drive.sh` citado acima não foi encontrado em
+- Saída do servidor: **os `pre-migracao-*` não saem do servidor** (tarefa 247, instalado em
+  08/10/2026 19:10 UTC). O `/usr/local/bin/sync-r2.sh` (cópia de `applications/sync-r2.sh`,
+  sha256 `c473dfac…8b7e6`) copia `*.sql.gz` e `*.tar.gz` de `/opt/backups/db` para o R2 às 4h
+  com `rclone copy` e o filtro `- pre-migracao-*` na frente. Motivo: o script só copia e o
+  bucket não expira nada, então cada dump ficaria no R2 para sempre. Provado com o rclone
+  1.75 do servidor, só por listagem: em pasta temporária o filtro novo tira os
+  `pre-migracao-*` (raiz e subpasta) e mantém os outros; em `/opt/backups/db` as duas
+  listagens são iguais (82 arquivos). Nenhum objeto foi apagado do R2. O `sync-drive.sh` citado acima não foi encontrado em
   08/10/2026: `/opt/avila-rclone` não existe e nenhum arquivo de `/etc/cron.d` cita `drive`.
 - Pendência: o `/usr/local/sbin/avila-deploy` (`scripts/deploy-container.sh`, usado pelo
   GitHub Actions) **não foi atualizado** e continua na versão de 18/09/2026, sem o dump.
@@ -516,7 +522,13 @@ roda; dump que falha para o deploy sem migrar. Sem migração pendente não há 
   nenhum `pre-migracao-*` existe em `/opt/backups/db` nem no R2. A versão do repositório tem
   131 linhas a mais que a instalada e nunca rodou em produção; instalar é tarefa própria, com
   revisão do que mudou desde 18/09 (comandos no `BUILD-MANUAL.md`).
-- Volta: `/opt/backups/avila-deploy-local.bak-20261008-t241` e
+- Desde a tarefa 247 o `avila-deploy-local` confere, em todo deploy de destino com
+  `MIGRATE_DUMP_DB`, se o banco da URL de migração é o mesmo; diferente, para antes de
+  migrar e de trocar o container. A URL vai ao Prisma por ambiente, não pela linha de comando.
+- Volta: `/opt/backups/avila-deploy-local.bak-20261008-t247` (versão da 241, sha256
+  `e95b19e6…4806e`) e `/opt/backups/sync-r2.sh.bak-20261008-t247` (sha256 `90d0e346…0bf1a`),
+  sempre por troca atômica e sem deploy nem sync em curso (comandos em
+  `applications/README.md`). Da 241: `/opt/backups/avila-deploy-local.bak-20261008-t241` e
   `/opt/backups/lojas.avilaops.com.conf.bak-20261008-t241`. Desligar só o dump: apagar a
   linha `MIGRATE_DUMP_DB=lojas` do `.conf`.
 

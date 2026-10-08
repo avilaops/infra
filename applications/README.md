@@ -49,3 +49,24 @@ rclone lsf /opt/backups/db --filter "- pre-migracao-*" --filter "+ *.sql.gz" --f
 
 Sem nenhum `pre-migracao-*` no diretório as duas somas têm de ser iguais (em 08/10/2026: 82
 arquivos, iguais).
+
+Instalado em 08/10/2026 19:10 UTC (sha256 `c473dfac…8b7e6`, `root:root` 750). O servidor tem
+rclone 1.75 e o teste local foi com 1.60, então a prova foi refeita lá antes da troca, em pasta
+temporária com `rclone lsf -R --files-only`: o filtro novo tirou os `pre-migracao-*` da raiz e
+de subpasta e manteve os `.sql.gz` e `.tar.gz` comuns.
+
+Instalação e volta são a mesma troca atômica (nunca `cp` por cima do arquivo em uso), fora da
+janela das 04:00 UTC e sem sync em curso. O padrão com colchete evita que o `pgrep` case com o
+próprio shell; mesmo assim, rodar por `ssh applications bash -s < roteiro`, porque um
+`ssh applications '…sync-r2.sh…'` põe o nome na linha de comando do shell remoto.
+
+```bash
+pgrep -af "[s]ync-r2|[r]clone" || echo nenhum
+# instalar: mandar applications/sync-r2.sh para /usr/local/bin/.sync-r2.sh.novo; voltar:
+cp -p /opt/backups/sync-r2.sh.bak-20261008-t247 /usr/local/bin/.sync-r2.sh.novo
+bash -n /usr/local/bin/.sync-r2.sh.novo && chown root:root /usr/local/bin/.sync-r2.sh.novo \
+  && chmod 750 /usr/local/bin/.sync-r2.sh.novo \
+  && mv /usr/local/bin/.sync-r2.sh.novo /usr/local/bin/sync-r2.sh \
+  || rm -f /usr/local/bin/.sync-r2.sh.novo
+sha256sum /usr/local/bin/sync-r2.sh
+```
