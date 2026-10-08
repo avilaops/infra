@@ -73,7 +73,25 @@ build-pesado ./deploy/empacotar.sh      # script do produto que faz build por de
 - Acrescenta `--max-old-space-size=1024` ao `NODE_OPTIONS`, preservando o que já
   houver; se quem chama já definiu um `max-old-space-size`, fica o dele.
 - Ajustes por variável: `BUILD_PESADO_ESPERA_S` (padrão 1800),
-  `BUILD_PESADO_HEAP_MB` (padrão 1024), `BUILD_PESADO_LOCK`.
+  `BUILD_PESADO_HEAP_MB` (padrão 1024), `BUILD_PESADO_CARENCIA_S` (padrão 30),
+  `BUILD_PESADO_LOCK`. Os valores em segundos são inteiros sem zero à esquerda
+  (`08` é recusado com código 64).
+- O comando roda em sessão e grupo de processos próprios (`setsid`), sem
+  terminal de controle: comando que pede senha em `/dev/tty` não funciona por
+  aqui. `HUP`, `INT`, `QUIT` e `TERM` no `build-pesado` viram `TERM` para o
+  grupo inteiro (o comando e o que ele disparou); a trava só solta com o grupo
+  vazio, quem não encerrar em `BUILD_PESADO_CARENCIA_S` leva `KILL`, e a saída
+  é 128 + o sinal.
+- **Limite do `KILL`:** `kill -9` no `build-pesado` solta a trava na hora e
+  deixa o build rodando. Para interromper um build, mande `TERM` ao
+  `build-pesado`; nunca `KILL` só nele.
+- Quem espera vê apenas o pid, a hora, o nome do comando e o diretório de quem
+  está com a trava (`/var/lock/build-pesado.lock.dono`); os argumentos não são
+  gravados, porque podem carregar segredo.
+- Chamada aninhada (script sob a trava que chama `build-pesado` de novo) não
+  espera por si mesma, desde que o `build-pesado` de fora ainda esteja vivo e
+  seja ancestral. Processo que sobrou de um build encerrado entra na fila como
+  qualquer outro.
 - Dentro de `docker build` o ambiente de quem chama não entra e o `--memory` é
   ignorado pelo BuildKit: o teto só vale se o Dockerfile declarar
   `ARG NODE_OPTIONS` e `ENV NODE_OPTIONS=$NODE_OPTIONS` no estágio de build. A
@@ -81,11 +99,19 @@ build-pesado ./deploy/empacotar.sh      # script do produto que faz build por de
 - A trava só protege quem passa por ela: build disparado sem o `build-pesado`
   continua concorrendo.
 
-Instalar ou atualizar no `creators` (atalho para o script do repositório):
+Instalar ou atualizar no `creators`: `~/.local/bin/build-pesado` é uma **cópia**
+de um commit já enviado à `main`, não um link para o checkout (edição ainda não
+revisada no infra não muda o que os agentes executam). Depois do push:
 
 ```bash
-ln -sfn ~/projetos/infra/scripts/build-pesado.sh ~/.local/bin/build-pesado
+git -C ~/projetos/infra fetch origin main
+~/projetos/infra/scripts/instalar-build-pesado.sh            # origin/main
+~/projetos/infra/scripts/instalar-build-pesado.sh <commit>   # ou um commit específico
+tail -n 1 ~/.local/bin/build-pesado                          # mostra o commit instalado
 ```
+
+O instalador recusa (código 65) commit que não esteja em `origin/main` e troca o
+arquivo de forma atômica; build em andamento segue com a versão que já abriu.
 
 ## Histórico
 
