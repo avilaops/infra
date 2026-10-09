@@ -196,6 +196,38 @@ próprios resolvem direto para o servidor.
 
 ### Comandeiro e Brasa Mineira
 
+**Atualização de 09/10/2026 (decisão do Nicolas): o aplicativo do Comandeiro foi
+desligado e a Brasa Mineira ficou só com um cardápio estático que manda o pedido
+para o WhatsApp.** O que vale desde então:
+
+| Domínio | Destino desde 09/10/2026 |
+| --- | --- |
+| `brasamineira.com.br` | estático `/var/www/brasamineira.com.br` (repositório `avilaops/brasamineira.com.br`); qualquer caminho antigo cai na mesma página |
+| `www.brasamineira.com.br` | redirect 301 → `brasamineira.com.br` |
+| `brasa.comandeiro.com.br` (QR das mesas) | redirect 301 → `brasamineira.com.br` |
+| `app.comandeiro.com.br` | redirect 302 → `comandeiro.com.br` |
+| `https://` (qualquer outro host) | resposta fixa 410 |
+| `comandeiro.com`, `comandeiro.com.br` e os `www` | sem mudança: estáticos, site do produto |
+
+- Contêineres `minas-espetinhos-app-1` e `minas-espetinhos-db-1`: **parados, não
+  removidos** (`docker compose stop` em `/opt/minas-espetinhos`). Os volumes
+  `minas-espetinhos_db-data` e `minas-espetinhos_storage` continuam no servidor.
+- Dump do banco `plataforma` tirado antes de desligar:
+  `/opt/backups/retidos-comandeiro-20261009/` (37 tabelas; o banco tinha 4 pedidos, o
+  último de 30/09/2026).
+- Crons retirados: `/etc/cron.d/minas-espetinhos-backup.retirado-20261009` e
+  `minas-espetinhos-health.retirado-20261009`.
+- `backup-todos-bancos.sh`: o `minas-espetinhos-db-1` voltou à lista de removidos, e
+  a regra passou a ignorar também contêiner dessa lista que existe mas está parado
+  (cópia anterior em `/opt/backups/backup-todos-bancos.sh.bak-20261009-antes-comandeiro`).
+- Destino de deploy retirado: `/etc/avilaops/deploy/app.comandeiro.com.br.conf.retirado-20261009`
+  (e o `.conf` saiu de `deploy/production/`), para um push no repositório não religar o app.
+- Caddyfile anterior: `/opt/backups/Caddyfile.bak-20261009-antes-brasa-estatico`.
+- Para religar: restaurar o Caddyfile, `docker compose -f docker-compose.prod.yml start`,
+  devolver os dois crons e o `.conf`.
+
+O texto e a tabela abaixo descrevem o estado **anterior**, de 07/10/2026.
+
 O contêiner que atende a `3040` (`minas-espetinhos-app-1`) foi removido em
 06/10/2026 02:08 UTC e **religado em 07/10/2026 03:23 UTC** (tarefa 153), com
 a imagem do último deploy (`ghcr.io/avilaops/app.comandeiro.com.br@sha256:bfe4aede…`,
