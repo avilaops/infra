@@ -158,19 +158,26 @@ build-pesado ./deploy/empacotar.sh      # script do produto que faz build por de
 - A trava só protege quem passa por ela: build disparado sem o `build-pesado`
   continua concorrendo.
 
-Instalar ou atualizar no `creators`: `~/.local/bin/build-pesado` é uma **cópia**
-de um commit já enviado à `main`, não um link para o checkout (edição ainda não
-revisada no infra não muda o que os agentes executam). Depois do push:
+Instalar ou atualizar no `creators`: `~/.local/bin/build-pesado` e
+`/usr/local/bin/build-pesado` são **cópias** iguais de um commit já enviado à
+`main`, não links para o checkout (edição ainda não revisada no infra não muda o
+que os agentes executam). A de `/usr/local/bin` (dono `root`, gravada com
+`sudo -n`) existe porque `~/.local/bin` só entra no PATH em shell de login: em
+cron, systemd ou `env -i` os scripts de deploy não achavam o wrapper e
+construíam sem trava e sem teto, em silêncio. O instalador grava as duas de uma
+vez. Depois do push:
 
 ```bash
 git -C ~/projetos/infra fetch origin main
 ~/projetos/infra/scripts/instalar-build-pesado.sh            # origin/main
 ~/projetos/infra/scripts/instalar-build-pesado.sh <commit>   # ou um commit específico
 tail -n 1 ~/.local/bin/build-pesado                          # mostra o commit instalado
+cmp ~/.local/bin/build-pesado /usr/local/bin/build-pesado    # as duas cópias são iguais
 ```
 
-O instalador recusa (código 65) commit que não esteja em `origin/main` e troca o
-arquivo de forma atômica; build em andamento segue com a versão que já abriu.
+O instalador recusa (código 65) commit que não esteja em `origin/main` e troca
+cada arquivo de forma atômica; build em andamento segue com a versão que já
+abriu. Sai com 73 se não conseguir gravar num destino (sem `sudo`, por exemplo).
 
 ## Histórico
 

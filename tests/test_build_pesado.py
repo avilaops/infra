@@ -354,6 +354,24 @@ class InstalarBuildPesado(unittest.TestCase):
         self.assertEqual(resultado.returncode, 0, resultado.stderr)
         self.assertTrue(self.destino.read_text().startswith(SCRIPT.read_text()))
 
+    def test_instala_o_mesmo_arquivo_em_todos_os_destinos(self):
+        """Tarefa 261: ~/.local/bin e /usr/local/bin recebem a mesma copia."""
+        outro = self.root / 'sistema/bin/build-pesado'
+        env = dict(os.environ, BUILD_PESADO_REPO=str(self.repo),
+                   BUILD_PESADO_DESTINO=f'{self.destino}:{outro}')
+        resultado = subprocess.run(['bash', str(INSTALADOR)], env=env, text=True,
+                                   capture_output=True, timeout=60)
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
+        self.assertFalse(self.destino.is_symlink())
+        self.assertEqual(outro.read_bytes(), self.destino.read_bytes())
+        self.assertTrue(os.access(outro, os.X_OK))
+        self.assertEqual([p.name for p in outro.parent.iterdir()], ['build-pesado'])
+        self.assertEqual(resultado.stdout.count('build-pesado instalado em '), 2)
+
+    def test_padrao_inclui_usr_local_bin(self):
+        texto = INSTALADOR.read_text()
+        self.assertIn('$HOME/.local/bin/build-pesado:/usr/local/bin/build-pesado', texto)
+
 
 if __name__ == '__main__':
     unittest.main()
