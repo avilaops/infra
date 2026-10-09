@@ -142,14 +142,22 @@ existem **dois padrões de banco convivendo**.
 | Serviço | Porta | Público |
 |---|---|---|
 | `obs.avilaops.com` → grafana | 3000 | sim |
-| `n8n.avilaops.com` → n8n | 5678 | sim |
+| `n8n.avilaops.com` → n8n (em container em 15/08/2026; ver nota abaixo) | 5678 | sim |
 | prometheus | 9090 | não |
 | loki | `10.10.0.1:3100` | só pelo túnel |
 | alertmanager | 9093 | não |
 | blackbox_exporter | 9115 | não |
 | node_exporter | 9100 | não |
 | promtail | — | não |
-| `n8n-postgres-1` (banco `n8n`) | 5432 | não |
+| `n8n-postgres-1` (banco `n8n`; container de 15/08/2026, ver nota abaixo) | 5432 | não |
+
+> **Atualização de 09/10/2026 (tarefa 266).** As duas linhas do n8n acima são o
+> retrato de 15/08/2026. Desde 08/10/2026 o n8n não roda mais em container nem
+> neste VPS: é serviço nativo do systemd no servidor de aplicações
+> (`n8n.service` em `127.0.0.1:5678` e `avila-n8n-modules.service` em
+> `127.0.0.1:5679`), atrás do Caddy do host, com o banco `n8n` no Postgres do
+> host. O container `n8n-postgres-1` não faz parte da instalação atual. Estado
+> vigente: `INVENTARIO-SERVIDORES.md`, seções 2 e 4.
 
 ### 1.7 Fluxos entre os VPS
 

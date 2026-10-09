@@ -116,17 +116,21 @@ Usuários com shell na produção: `root`, `postgres`, `deploy` (uid 1002),
 
 ---
 
-## 2. Domínios — 44 hostnames em 30 blocos do Caddy
+## 2. Domínios — 48 hostnames em 34 blocos do Caddy
 
-Conferido em 07/10/2026 com `caddy adapt --config /etc/caddy/Caddyfile` (44
-hostnames) e leitura dos blocos: 28 no `Caddyfile` (um deles o genérico
-`https://`) e 2 em `/etc/caddy/lojas.d/*.caddy`.
+Conferido em 09/10/2026 08:01 UTC (tarefa 266) com
+`caddy adapt --config /etc/caddy/Caddyfile` (48 hostnames) e leitura dos blocos:
+32 no `Caddyfile` (um deles o genérico `https://`) e 2 em
+`/etc/caddy/lojas.d/*.caddy`. Em 07/10/2026 eram 44 hostnames em 30 blocos;
+entraram desde então `n8n.avilaops.com`, `tms.avilaops.com`, `crm.avilaops.com`
+e `ludus.avilaops.com`, um bloco cada. Nesta conferência só os hostnames, os
+destinos dessas quatro linhas e a contagem de blocos foram relidos; os destinos
+das demais linhas são os de 07/10/2026 e batem com o `caddy adapt` de hoje
+(o bloco de `brilhax.com` não foi relido por inteiro).
 
-Atualização de 08/10/2026 (tarefa 252): `n8n.avilaops.com` passou a ser servido
-por este Caddy (bloco próprio no `Caddyfile`, n8n nativo da seção 4) e o
-registro A resolve para `178.105.82.48` (`dig` em `1.1.1.1` e `8.8.8.8`). O
-`caddy adapt` dessa data lista 48 hostnames; a contagem e as tabelas abaixo são
-as de 07/10/2026 e não foram refeitas.
+`n8n.avilaops.com` é servido por este Caddy desde 08/10/2026 (tarefa 252; bloco
+próprio no `Caddyfile`, n8n nativo da seção 4) e o registro A resolve para
+`178.105.82.48` (`dig` em `1.1.1.1` e `8.8.8.8`, conferido nessa data).
 
 ### Avila Ops
 
@@ -138,6 +142,10 @@ as de 07/10/2026 e não foram refeitas.
 | `app.avila.inc` | `127.0.0.1:3004` |
 | `auth.avilaops.com` | `172.31.0.10:3010` (rede `edge`) |
 | `erp.avilaops.com` | `127.0.0.1:3140` (contêiner `erp`; não é mais Odoo) |
+| `crm.avilaops.com` | `172.31.0.13:3000` (rede `edge`, contêiner `crm-avilaops-com-web`) |
+| `tms.avilaops.com` | `172.31.0.11:3000` (rede `edge`, contêiner `tms-avilaops-com-web`) |
+| `n8n.avilaops.com` | `127.0.0.1:5678` (n8n nativo); `/avila/*`, `/avila-api/*` e os arquivos `avila-modules.*` em `127.0.0.1:5679` (`avila-n8n-modules`); estáticos do editor em `/opt/n8n/override` |
+| `ludus.avilaops.com` | estático `/var/www/ludus.avilaops.com` |
 | `jobs.avilaops.com` | estático `/var/www/jobs.avilaops.com` |
 | `mail.avilaops.com` | `127.0.0.1:3042` (API) e `127.0.0.1:3041` (webmail) |
 | `mail-mcp.avilaops.com` | `127.0.0.1:8790` — **nada escutando** |
@@ -244,11 +252,13 @@ está no `.env` recriado.
 ### Saíram do Caddy desde 16/08/2026
 
 `wa.avilaops.com`, `cliente.avilaops.com`, `cliente.avila.inc`,
-`entrar.avilaops.com`, `crm.avilaops.com`, `docs.avilaops.com`,
+`entrar.avilaops.com`, `docs.avilaops.com`,
 `irlquest.avilaops.com`, `minas.avilaops.com`, `poc.avilaops.com`,
 `agricola.avilaops.com`, `api-agricola.avilaops.com`, `odoo.avilaops.com`,
 `partsagricola.com.br`, `www.`, `api.` e `erp.partsagricola.com.br`,
 `erp.brilhax.com`, `admin.saudepet.app.br` e `minas.comandeiro.com.br`.
+`crm.avilaops.com` também tinha saído e voltou: em 09/10/2026 tem bloco próprio
+(tabela Avila Ops acima).
 
 ### Destinos de deploy (`/etc/avilaops/deploy`, 19 `.conf` ativos)
 
@@ -650,15 +660,18 @@ variável (repositório `avilaops/n8n.avilaops.com`). Cópias de antes em
 
 ## 8. Produção — `/opt` e `/var/www`
 
-Conferido em 07/10/2026 com `ls` e `du -sh`.
+Conferido em 09/10/2026 08:01 UTC (tarefa 266) com `ls -la` e `du -sh`.
 
-### `/opt` (20 diretórios)
+### `/opt` (23 entradas: 21 diretórios e 2 links)
+
+Fora da contagem fica o diretório oculto `.releases` (364 MB), destino dos dois
+links.
 
 | Diretório | Tamanho |
 | --- | --- |
 | `arquivo` | 997 MB (`sorroche-20261006`, arquivado em 2026-10-06) |
-| `backups` | 705 MB só em `backups/db` |
-| `lojas` | 618 MB |
+| `backups` | 1,1 GB, dos quais 888 MB em `backups/db` |
+| `lojas` | 644 MB |
 | `saudepet` | 592 MB |
 | `google` | 435 MB |
 | `app-avilaops` | 323 MB |
@@ -666,17 +679,21 @@ Conferido em 07/10/2026 com `ls` e `du -sh`.
 | `cifra` | 51 MB |
 | `n8n` | 2,9 GB em 08/10/2026: **em uso** desde essa data pelo n8n nativo (`app`, `modules`, `override`, `arquivos`, `n8n.env`; seção 4). Em 07/10/2026 eram 16 MB do n8n em container, parado desde 19/09/2026; essas sobras e o `LEIA-ANTES-DE-SUBIR.txt` foram removidos |
 | `minas-espetinhos` | 16 MB (Comandeiro, religado em 07/10/2026) |
-| `erp` | 12 MB |
+| `erp` | 20 MB |
 | `auth-avilaops` | 1,0 MB |
 | `vedashow-sync` | 32 KB |
+| `tagflow` | 20 KB |
+| `tms-avilaops-com` | 16 KB (`docker-compose.yml`, `.env` e uma cópia anterior do `.env`) |
+| `crm-avilaops-com` | 12 KB (`docker-compose.yml`, `.env`) |
 | `mello` | 12 KB |
 | `containerd` | 12 KB |
 | `avilaops-scripts` | 12 KB |
 | `mellotransportesriopreto-com-br` | 8 KB |
 | `evolution-avilaops-com` | 16 KB em 09/10/2026 (`docker-compose.yml`, `.env`, `.env.example`) |
-| `avila-rclone` | 8 KB |
-| `avila-webmail` | link |
-| `avila-mail` | link |
+| `avila-webmail` | link para `/opt/.releases/webmail.avilaops.com/<versão>` |
+| `avila-mail` | link para `/opt/.releases/mail.avilaops.com/<versão>` |
+
+`avila-rclone` (8 KB em 07/10/2026) não existe mais.
 
 ### `/var/www`
 
@@ -686,6 +703,7 @@ Os sites estáticos publicados pelo deploy são links para
 | Diretório | Tamanho | Observação |
 | --- | --- | --- |
 | `cifra` | **1006 MB** | maior item |
+| `ludus.avilaops.com` | 107 MB | em uso (`ludus.avilaops.com`, seção 2) |
 | `comandeiro.com.br` | 1,6 MB | em uso |
 | `comandeiro.com` | 508 KB | em uso |
 | `adminer` | 508 KB | ferramenta de banco (compartilhada no Samba) |
