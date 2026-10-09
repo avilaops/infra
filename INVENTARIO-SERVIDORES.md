@@ -556,9 +556,9 @@ roda; dump que falha para o deploy sem migrar. Sem migração pendente não há 
   `/opt/backups/lojas.avilaops.com.conf.bak-20261008-t241`. Desligar só o dump: apagar a
   linha `MIGRATE_DUMP_DB=lojas` do `.conf`.
 
-### Script manual que apaga: `limpeza-fase1.sh`, arquivado em `/opt/arquivo` (tarefas 236 e 249, 08/10/2026)
+### Script manual que apaga: `limpeza-fase1.sh`, arquivado em `/opt/arquivo` (tarefas 236, 249 e 264, 08 e 09/10/2026)
 
-**Estado desde a tarefa 249 (08/10/2026 19:34 UTC):** o script saiu de `/root` e está
+**Estado desde a tarefa 249 (08/10/2026 19:33 UTC):** o script saiu de `/root` e está
 arquivado em **`/opt/arquivo/limpeza-fase1-20261008.sh`**, modo 600 (sem bit de execução),
 dono root, sha256 `f2d0c3e2…cb7c59` (igual antes e depois de mover; o conteúdo não foi
 editado). `/root/limpeza-fase1.sh` não existe mais. Não foi rodado nem apagado.
@@ -583,9 +583,16 @@ rotacionados. Tirar o bit de execução e mudar o caminho só evita a execução
   arquivos, nenhum em `/opt/backups`. Nada foi apagado e o script não foi executado.
 - A contagem "restantes" no fim do script (linha 73) ainda desce em `/opt/backups`, mas só
   imprime um número (`find … | wc -l`). Com o script arquivado, não foi corrigida.
-- Versão anterior à 236: `/root/limpeza-fase1.sh.antes-t236-20261008` (modo 600 de propósito,
-  para não ser executada por engano; sha256 `71b2a6d0…`). Continua em `/root`; **é a versão
-  que ainda desce em `/opt/backups`** e não deve voltar ao uso.
+- Versão anterior à 236: desde a tarefa 264 (09/10/2026 07:46 UTC) está em
+  **`/opt/arquivo/limpeza-fase1-antes-t236-20261008.sh`**, modo 600 (sem bit de execução),
+  dono root, 4400 bytes, sha256
+  `71b2a6d012f05bfcb669b1d4c77b7bfbccd25c70b8915133859f31e304965ce0` (igual antes e depois
+  de mover; não foi rodada, editada nem apagada). `/root/limpeza-fase1.sh.antes-t236-20261008`
+  não existe mais, e não sobra script de limpeza em `/root`. **É a versão que ainda desce em
+  `/opt/backups`** e não deve voltar ao uso.
+- Volta da 264: `mv /opt/arquivo/limpeza-fase1-antes-t236-20261008.sh
+  /root/limpeza-fase1.sh.antes-t236-20261008` (o modo 600 fica como está; não há motivo
+  previsto para fazer isso).
 - Volta da 249: `mv /opt/arquivo/limpeza-fase1-20261008.sh /root/limpeza-fase1.sh && chmod 755
   /root/limpeza-fase1.sh` (não há motivo previsto para fazer isso).
 - **Segue no alcance** (14 arquivos no ensaio da 236; não mexidos): as cópias `.env*.bak*` e
