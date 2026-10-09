@@ -34,13 +34,18 @@ só aceita imagem do `IMAGE_REPOSITORY` daquela aplicação.
 
 **Os dois caminhos estão em uso (conferido em 08/10/2026, tarefa 247).** O GitHub Actions
 não está parado: de 01/10 a 08/10 o `avila-deploy` rodou 114 vezes no `applications` (39 do
-`lojas.avilaops.com`, 8 delas em 08/10). O `/usr/local/sbin/avila-deploy` instalado é de
-18/09/2026 (152 linhas) e está bem atrás de `scripts/deploy-container.sh` (283 linhas): não
-tem `preflight`, `ensure_space`, `prune_old_images`, a cópia do `.env` para o Prisma nem o
-dump antes da migração. Ou seja, **deploy do `lojas` pelo Actions migra sem dump**; só o
-`avila-deploy-local` faz o dump. Instalar a versão do repositório troca o deploy de todas as
-aplicações de uma vez e pede revisão própria do que mudou desde 18/09 (ver "Instalar ou
-atualizar").
+`lojas.avilaops.com`, 8 delas em 08/10).
+
+**Desde 09/10/2026 07:30 UTC (tarefa 262) o `/usr/local/sbin/avila-deploy` instalado é o
+`scripts/deploy-container.sh` do commit `44624fd`** (315 linhas, sha256 `170359f2…e3347`), no
+lugar da versão de 18/09/2026 (152 linhas, sha256 `c55888b5…493dc3`). Passou a ter
+`preflight`, `ensure_space`, `prune_old_images`, a cópia do `.env` para o Prisma e o dump
+antes da migração: **o deploy do `lojas` pelo Actions deixou de migrar sem dump**. Primeiros
+deploys de verdade com ele, em 09/10: `tms.avilaops.com` (12:07 UTC, sem migração; ficaram
+duas imagens do repositório), `app.avilaops.com` (12:40 UTC) e `auth.avilaops.com` (13:24 UTC),
+estes dois com a migração pelo Prisma lendo a cópia do `.env`. `lojas`, `saudepet-backend` e
+`mail` ainda não tinham publicado (tarefa 291). O que entrou no script depois do `44624fd` (entrada padrão fechada em
+`preflight`, `ensure_space` e `docker image rm`, tarefa 291) **não está instalado**.
 
 ## Limites
 
@@ -102,8 +107,9 @@ ssh applications 'tr -d "\r" > /usr/local/sbin/.avila-deploy-local.novo && bash 
 ```
 
 O `/usr/local/sbin/avila-deploy` (`scripts/deploy-container.sh`, modo 755, chamado pelo
-`gha-deploy` via `sudo`) se instala do mesmo jeito, com os nomes trocados. **Não foi
-reinstalado desde 18/09/2026**: a versão do repositório nunca rodou em produção.
+`gha-deploy` via `sudo`) se instala do mesmo jeito, com os nomes trocados e o modo 755. Última
+instalação: 09/10/2026 07:30 UTC (tarefa 262, commit `44624fd`); cópia de volta e comandos em
+`applications/README.md`.
 
 ## Build no servidor dos agentes (`creators`): um por vez
 

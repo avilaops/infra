@@ -194,7 +194,8 @@ prune_old_images() {
   local id
   docker image ls --no-trunc --format '{{.ID}}' "$IMAGE_REPOSITORY" | sort -u | while read -r id; do
     [[ -n "$id" && "$id" != "$expected_image" && "$id" != "$previous_image" ]] || continue
-    docker image rm "$id" >/dev/null 2>&1 || true
+    # Sem a entrada do laco: quem le dela come o resto da lista.
+    docker image rm "$id" </dev/null >/dev/null 2>&1 || true
   done
 }
 [[ $EUID == 0 ]] || fail 'O dispatcher precisa executar como root.'
@@ -220,8 +221,9 @@ state_dir="/var/lib/avilaops/deploy/$application"
 install -d -m 700 "$state_dir"
 exec 9>"$state_dir/lock"
 flock -w 600 9 || fail 'Outro deploy continua em andamento.'
-preflight
-ensure_space
+# A entrada padrao traz o token do GHCR: nada antes do read pode ler dela.
+preflight </dev/null
+ensure_space </dev/null
 # Token temporario do proprio job, recebido pelo canal SSH e descartado apos o pull.
 IFS= read -r registry_token || fail 'Token temporario do GHCR ausente.'
 [[ -n "$registry_token" ]] || fail 'Token temporario do GHCR vazio.'

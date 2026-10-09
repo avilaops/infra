@@ -8,6 +8,9 @@ o arquivo instalado: mudou lá, muda aqui no mesmo commit (e o contrário).
 | `rotacionar-backups.sh` | `/opt/avilaops-scripts/rotacionar-backups.sh` (`root:root`, 755) | `avilaops-rotacionar-backups.timer`, 03:40 UTC |
 | `sync-r2.sh` | `/usr/local/bin/sync-r2.sh` (`root:root`, 750) | `/etc/cron.d/avila-r2-backup`, 04:00 UTC |
 
+O `avila-deploy` não tem cópia nesta pasta: o versionado é `scripts/deploy-container.sh` (ver
+"`avila-deploy`" abaixo).
+
 `rotacionar-backups.teste.sh` monta um diretório temporário com arquivos falsos e confere a
 regra (família, gzip vazio, gzip truncado, nome com espaço ou hífen, nome que é só a data,
 `.dump`). Roda junto
@@ -70,6 +73,52 @@ bash -n /usr/local/bin/.sync-r2.sh.novo && chown root:root /usr/local/bin/.sync-
   || rm -f /usr/local/bin/.sync-r2.sh.novo
 sha256sum /usr/local/bin/sync-r2.sh
 ```
+
+## `avila-deploy`
+
+`/usr/local/sbin/avila-deploy` (`root:root`, 755) é o deploy que o GitHub Actions chama pelo
+`gha-deploy` via `sudo`. O versionado é `scripts/deploy-container.sh`; os testes são
+`tests/test_deploy.py`.
+
+| Quando (UTC) | Tarefa | Commit | sha256 instalado | Cópia de volta |
+|---|---|---|---|---|
+| 18/09/2026 20:29 | — | versão de 18/09 (152 linhas) | `c55888b5…493dc3` | `/usr/local/sbin/avila-deploy.bak-20260916-160213` (a de 14/09) |
+| 09/10/2026 07:30:28 | 262 | `44624fd` (315 linhas) | `170359f2…e3347` | `/opt/backups/avila-deploy.bak-20261009-t262` (`c55888b5…493dc3`) |
+
+O que veio depois do `44624fd` em `scripts/deploy-container.sh` (tarefa 291: `preflight`,
+`ensure_space` e `docker image rm` com a entrada padrão fechada) **não está instalado**;
+enquanto não for, `sha256sum` do instalado e do versionado diferem.
+
+```bash
+ssh applications sha256sum /usr/local/sbin/avila-deploy   # instalado
+git show 44624fd:scripts/deploy-container.sh | sha256sum   # o que foi instalado na 262
+```
+
+Troca e volta são sempre por nome provisório e `mv` (atômico), nunca `cp` por cima, sem
+deploy em curso e com o roteiro pela entrada padrão (`ssh applications bash -s < roteiro`),
+porque o `pgrep` casa com a linha de comando de um `ssh applications '…avila-deploy…'`:
+
+```bash
+pgrep -af "[a]vila-deploy" || echo nenhum
+for l in /var/lib/avilaops/deploy/*/lock; do flock -n "$l" true || echo "PRESA: $l"; done
+# voltar para a versão de 18/09:
+cp -p /opt/backups/avila-deploy.bak-20261009-t262 /usr/local/sbin/.avila-deploy.novo
+bash -n /usr/local/sbin/.avila-deploy.novo && chown root:root /usr/local/sbin/.avila-deploy.novo \
+  && chmod 755 /usr/local/sbin/.avila-deploy.novo \
+  && mv /usr/local/sbin/.avila-deploy.novo /usr/local/sbin/avila-deploy \
+  || rm -f /usr/local/sbin/.avila-deploy.novo
+sha256sum /usr/local/sbin/avila-deploy   # c55888b5…493dc3
+```
+
+Critério de volta: deploy que falhe por motivo do script novo (`preflight`, espaço,
+`Environment variable not found`, `Variavel de banco…`, `Banco da URL…` sem que o `.env`
+tenha mudado). Falha de migração de verdade ou de saúde do serviço não é motivo. A volta não
+desfaz o que os deploys já fizeram: imagem antiga removida pela poda só volta por pull do
+GHCR, e os `pre-migracao-*` ficam até a rotação.
+
+Depois de cada sucesso em modo container ficam só a imagem em uso e a anterior de cada
+repositório (conferido em 09/10/2026: `tms` de 12 para 2, `app` de 14 para 2, `auth` de 8
+para 2).
 
 ## `evolution-avilaops-com/`
 

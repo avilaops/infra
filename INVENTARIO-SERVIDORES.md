@@ -583,15 +583,23 @@ roda; dump que falha para o deploy sem migrar. Sem migração pendente não há 
   `pre-migracao-*` (raiz e subpasta) e mantém os outros; em `/opt/backups/db` as duas
   listagens são iguais (82 arquivos). Nenhum objeto foi apagado do R2. O `sync-drive.sh` citado acima não foi encontrado em
   08/10/2026: `/opt/avila-rclone` não existe e nenhum arquivo de `/etc/cron.d` cita `drive`.
-- Pendência: o `/usr/local/sbin/avila-deploy` (`scripts/deploy-container.sh`, usado pelo
-  GitHub Actions) **não foi atualizado** e continua na versão de 18/09/2026, sem o dump.
-  **Correção de 08/10/2026 (tarefa 247): o Actions não está parado.** O `journalctl` do
-  `applications` mostra 114 execuções do `avila-deploy` pelo `gha-deploy` de 01/10 a 08/10,
-  39 do `lojas.avilaops.com` (8 em 08/10, a última às 17:10 UTC, `image.yml` por digest do
-  GHCR). Enquanto o `lojas` for publicado pelo Actions, a migração dele roda **sem** dump:
-  nenhum `pre-migracao-*` existe em `/opt/backups/db` nem no R2. A versão do repositório tem
-  131 linhas a mais que a instalada e nunca rodou em produção; instalar é tarefa própria, com
-  revisão do que mudou desde 18/09 (comandos no `BUILD-MANUAL.md`).
+- **`avila-deploy` do GitHub Actions também faz o dump desde 09/10/2026 07:30:28 UTC
+  (tarefa 262).** O `/usr/local/sbin/avila-deploy` (root:root 755, chamado pelo `gha-deploy`
+  via `sudo`) passou da versão de 18/09/2026 (sha256 `c55888b5…493dc3`, 152 linhas) para
+  `scripts/deploy-container.sh` do commit `44624fd` (sha256 `170359f2…e3347`, 315 linhas), por
+  troca atômica. Para destino com `MIGRATE_DUMP_DB` ele confere o banco da URL, roda
+  `migrate status` e, havendo pendência, grava o `pre-migracao-*` e só então migra; com a
+  variável de banco repetida no `.env`, para. Cópia de volta:
+  `/opt/backups/avila-deploy.bak-20261009-t262` (sha256 `c55888b5…493dc3`). Histórico: de
+  01/10 a 08/10 o `journalctl` mostrava 114 execuções pelo `gha-deploy`, 39 do
+  `lojas.avilaops.com`, todas com a versão antiga, que migrava **sem** dump.
+- Acompanhamento em 09/10/2026 13:25 UTC (tarefa 291): três deploys pelo script novo, os três
+  no ar: `tms.avilaops.com` (12:07 UTC, sem migração; a poda deixou 2 imagens do repositório,
+  eram 12), `app.avilaops.com` (12:40 UTC; 2 imagens, eram 14) e `auth.avilaops.com`
+  (13:24 UTC; 2 imagens, eram 8), estes dois com `No pending migrations to apply.` e o Prisma
+  lendo a cópia do `.env`. **O `lojas` ainda não publicou pelo script novo**: nenhum
+  `pre-migracao-*` existe e a linha `sem migracao pendente; dump dispensado` ou
+  `dump conferido` segue por ver, assim como os deploys de `saudepet-backend` e `mail`.
 - Desde a tarefa 247 o `avila-deploy-local` confere, em todo deploy de destino com
   `MIGRATE_DUMP_DB`, se o banco da URL de migração é o mesmo; diferente, para antes de
   migrar e de trocar o container. A URL vai ao Prisma por ambiente, não pela linha de comando.

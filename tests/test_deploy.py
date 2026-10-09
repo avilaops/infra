@@ -513,6 +513,59 @@ esac
         removidas = [linha for linha in self.docker_log() if linha.startswith('image rm')]
         self.assertEqual(removidas, ['image rm sha256:velha1', 'image rm sha256:velha2'])
 
+    def test_remocao_que_le_a_entrada_nao_come_o_resto_da_lista(self):
+        # O laco le os IDs da entrada padrao; um "image rm" que lesse dela pulava as demais.
+        self.stub('docker', '''#!/bin/bash
+set -eu
+echo "$*" >> "$TEST_ROOT/docker.log"
+case "$1 ${2:-}" in
+ "image ls") printf '%s\\n' sha256:atual sha256:anterior sha256:velha1 sha256:velha2 sha256:velha3 ;;
+ "image rm") cat >/dev/null ;;
+esac
+''')
+        result = self.run_bash('IMAGE_REPOSITORY=ghcr.io/avilaops/app; expected_image=sha256:atual; '
+                               'previous_image=sha256:anterior; prune_old_images', 50000)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        removidas = [linha for linha in self.docker_log() if linha.startswith('image rm')]
+        self.assertEqual(removidas, ['image rm sha256:velha1', 'image rm sha256:velha2', 'image rm sha256:velha3'])
+
+    def antes_do_token(self):
+        # As linhas de verdade do script entre a trava e a leitura do token.
+        trecho = SCRIPT.read_text().split("fail 'Outro deploy continua em andamento.'\n")[1]
+        trecho, leitura, _ = trecho.partition('IFS= read -r registry_token')
+        self.assertTrue(leitura)
+        self.assertIn('preflight', trecho)
+        self.assertIn('ensure_space', trecho)
+        return trecho + 'IFS= read -r registry_token; printf "token=%s\\n" "$registry_token"'
+
+    def test_token_chega_inteiro_mesmo_com_comando_que_le_a_entrada(self):
+        # preflight e ensure_space rodam antes do read do token, que vem pela entrada
+        # padrao. Aqui toda chamada ao docker engole a entrada inteira.
+        (self.root / 'compose.yml').write_text('services: {}\n')
+        self.stub('docker', '''#!/bin/bash
+set -eu
+echo "$*" >> "$TEST_ROOT/docker.log"
+cat >/dev/null
+case "$*" in
+ info*) echo "$TEST_ROOT/docker-root" ;;
+ "image prune"*) echo 50000 > "$TEST_ROOT/livre" ;;
+ *"config --services") echo app ;;
+ "inspect "*) echo sha256:$(printf 'a%.0s' {1..64}) ;;
+esac
+''')
+        container = ('DEPLOY_MODE=container; PROJECT_DIR="$TEST_ROOT"; COMPOSE_FILE="$TEST_ROOT/compose.yml"; '
+                     'COMPOSE_PROJECT=teste; SERVICE=app; CONTAINER=app; HEALTH_URL=http://localhost\n')
+        # Disco baixo (100 MB): passa pelo ramo de limpeza, que libera espaco.
+        (self.root / 'livre').write_text('100')
+        result = subprocess.run(['bash', '-c', 'set -euo pipefail; source ' + shlex.quote(str(self.functions)) + '\n'
+                                 + container + self.antes_do_token()],
+                                env=self.env, input='token-de-teste\n', capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('token=token-de-teste', result.stdout)
+        self.assertIn('image prune --force', self.docker_log())
+        self.assertIn('builder prune --force', self.docker_log())
+        self.assertTrue(any(linha.endswith('config --services') for linha in self.docker_log()))
+
 
 if __name__ == '__main__':
     unittest.main()
