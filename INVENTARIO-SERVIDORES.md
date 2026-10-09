@@ -64,6 +64,7 @@ definitiva é publicar o banco em `127.0.0.1:porta` no compose.
 | Postgres `n8n` (infra) | `n8n` | `/opt/n8n/.env` no servidor infra, variável `DB_POSTGRESDB_PASSWORD` — **não reconferido** | ver seção 9 | **sim** — **pendente**: servidor infra inalcançável (sem ping, 22 fechada); a role `n8n` do Postgres do host da produção tem outra senha (conferido em 07/10/2026) |
 | Bancos `erp` e `lojas` | — | `/opt/erp/.env` e `/opt/lojas/.env`, variável `DATABASE_URL` (modo `600`, root) | em uso | não |
 | Tokens de integração | — | `/etc/avilaops/tokens.env` (lido pelos crons do root) | em uso | não |
+| Evolution API (WhatsApp) | `evolution_avilaops_com` | `/opt/evolution-avilaops-com/.env` (modo 600, root): `DATABASE_CONNECTION_URI` (senha da role) e `AUTHENTICATION_API_KEY` (header `apikey`); os dois gerados no servidor em 09/10/2026 | em uso | não |
 
 A última coluna diz se o **valor** da credencial esteve em texto puro neste
 arquivo, em versões anteriores ao commit `aabc782` (06/10/2026). São **7**: a do
@@ -302,10 +303,19 @@ rodando e 2 parados.
 | `cifra-cifra-website-1` | por id (`67bbe90ed51d`) | `127.0.0.1:3010` |
 | `cifra-cifra-calculadora-1` | por id (`40410e0001ed`) | `127.0.0.1:3011` |
 | `minas-espetinhos-app-1` | por id (`ghcr.io/avilaops/app.comandeiro.com.br@sha256:bfe4aede…`) | `127.0.0.1:3040` |
+| `evolution-avilaops-com-web` | `evoapicloud/evolution-api:v2.3.7` | rede `edge` `172.31.0.14:8080`, sem domínio e sem bloco no Caddy |
 
 "Por id" é imagem fixada por digest pelo deploy (o `docker ps` mostra só o id).
 Os três contêineres `cifra-*` foram recriados em 06/10/2026 (tarefa 146) e os
 dois `minas-espetinhos-*` em 07/10/2026 (tarefa 153).
+
+Atualização de 09/10/2026: entrou o `evolution-avilaops-com-web` (Evolution API,
+gateway não-oficial de WhatsApp), em `/opt/evolution-avilaops-com`, com compose
+versionado em `applications/evolution-avilaops-com/`. Só o n8n nativo (seção 4)
+o chama, em `http://172.31.0.14:8080`, para publicar Status do WhatsApp; a
+instância se chama `status`. Limite de 640 MB de memória (usava 212 MB logo
+depois de subir). O `docker ps` dessa data mostra 18 contêineres rodando; a
+contagem do título e as tabelas são as de 07/10/2026 e não foram refeitas.
 
 ### Bancos em container
 
@@ -332,7 +342,8 @@ dois `minas-espetinhos-*` em 07/10/2026 (tarefa 153).
 
 ### Redes Docker
 
-`edge` (`172.31.0.0/24`), `app-avilaops_default`, `cifra_default`,
+`edge` (`172.31.0.0/24`; IPs fixos em 09/10/2026: `.10` auth, `.11` tms, `.12`
+mello, `.13` crm, `.14` evolution), `app-avilaops_default`, `cifra_default`,
 `minas-espetinhos_default`,
 `despolarizamed_default`, `saudepet_default` e as
 padrão `bridge`, `host`, `none`. `erp`, `lojas-avilaops` e `node_exporter` estão
@@ -407,6 +418,7 @@ arquivos de `/opt/backups/db` da rodada de 06/10/2026).
 | `lojas` | `lojas.avilaops.com` e lojas com domínio próprio |
 | `despolarizamed` | `despolarizamed.com.br` |
 | `saudepet` | SaúdePet |
+| `evolution_avilaops_com` | Evolution API (`evolution-avilaops-com-web`), schema `evolution_api`; criado em 09/10/2026 e incluído na rotina no mesmo dia (cópia do script em `/opt/backups/backup-todos-bancos.sh.bak-20261009-antes-evolution`) |
 | `sorroche_app` | Sorroche — app desligado; banco mantido e ainda na rotina diária. Dump retido em `/opt/backups/retidos-sorroche-20261006/` |
 
 O `pg_hba.conf` cita ainda um banco `migdolus` (regra própria para
@@ -432,7 +444,9 @@ compartilhada entre `app.avilaops.com` e `auth.avilaops.com`.
 `minas-espetinhos_db-data` e `minas-espetinhos_storage` (do Comandeiro, religado em
 07/10/2026), `saudepet_transcricao-modelos` e `saudepet_uploads-data`. Conferido em
 07/10/2026 com `docker volume ls`; há ainda um volume anônimo, criado em 07/10/2026 e
-em uso pelo `minas-espetinhos-db-1`.
+em uso pelo `minas-espetinhos-db-1`. Em 09/10/2026 entrou o
+`evolution-avilaops-com-instances` (sessão do WhatsApp da Evolution: perder o
+volume obriga a parear o número de novo).
 
 ---
 
@@ -652,6 +666,7 @@ Conferido em 07/10/2026 com `ls` e `du -sh`.
 | `containerd` | 12 KB |
 | `avilaops-scripts` | 12 KB |
 | `mellotransportesriopreto-com-br` | 8 KB |
+| `evolution-avilaops-com` | 16 KB em 09/10/2026 (`docker-compose.yml`, `.env`, `.env.example`) |
 | `avila-rclone` | 8 KB |
 | `avila-webmail` | link |
 | `avila-mail` | link |

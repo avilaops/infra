@@ -1,0 +1,57 @@
+# Evolution API (gateway nao-oficial de WhatsApp, Baileys por baixo), em
+# /opt/evolution-avilaops-com no servidor applications. Segue a Norma de
+# Plataforma (NORMA-PLATAFORMA.md): todo nome sai de `evolution.avilaops.com` e
+# nenhuma porta e publicada no host.
+#
+# Nao tem dominio publico nem bloco no Caddy: so o n8n (nativo no host) chama,
+# em http://172.31.0.14:8080, para publicar Status do WhatsApp.
+#
+# Sobe so a aplicacao. O banco e o PostgreSQL compartilhado do servidor (banco e
+# role `evolution_avilaops_com`), alcancado por host.docker.internal e coberto
+# pelo backup diario de la (/usr/local/bin/backup-todos-bancos.sh).
+name: evolution-avilaops-com
+
+services:
+  web:
+    # Tag fixa: `latest` e as 2.4.0-rc nao sao versao estavel.
+    image: evoapicloud/evolution-api:v2.3.7
+    container_name: evolution-avilaops-com-web
+    restart: unless-stopped
+    # O ENTRYPOINT da imagem aplica as migracoes do Prisma antes de subir.
+    env_file: [.env]
+    expose: ["8080"]
+    networks:
+      edge:
+        # IP fixo: o n8n roda no host e nao resolve nome de container.
+        ipv4_address: 172.31.0.14
+    # O Postgres do host escuta no gateway da bridge padrao (172.17.0.1).
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      # Sessao do WhatsApp (credenciais do pareamento). Perder este volume
+      # obriga a parear o numero de novo.
+      - instances:/evolution/instances
+    # O servidor tem pouca memoria livre; o teto impede que a Evolution derrube
+    # os vizinhos. Swap igual ao limite = sem swap para o container.
+    mem_limit: 640m
+    memswap_limit: 640m
+    labels:
+      avilaops.domain: evolution.avilaops.com
+      avilaops.stack: evolution
+      avilaops.tier: web
+      avilaops.backup: "postgres:evolution_avilaops_com"
+      avilaops.owner: nicolas
+    healthcheck:
+      # 127.0.0.1 e nao localhost: no Alpine, localhost pode resolver para ::1.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  instances:
+    name: evolution-avilaops-com-instances
+
+networks:
+  edge:
+    external: true
