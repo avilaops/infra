@@ -347,7 +347,7 @@ rodando e 2 parados.
 | `cifra-cifra-calculadora-1` | por id (`40410e0001ed`) | `127.0.0.1:3011` |
 | `minas-espetinhos-app-1` | por id (`ghcr.io/avilaops/app.comandeiro.com.br@sha256:bfe4aede…`) | `127.0.0.1:3040` |
 | `evolution-avilaops-com-web` | `evoapicloud/evolution-api:v2.3.7` | rede `edge` `172.31.0.14:8080`, sem domínio e sem bloco no Caddy |
-| `whatsapp-avilaops-com-web` | `ghcr.io/avilaops/whatsapp.avilaops.com:sha-5500b62…` desde 09/10/2026 16:00 UTC (build no `apps-noclient`) | rede `edge` `172.31.0.15:8080`, sem domínio e sem bloco no Caddy; a tela de conexão chega ao navegador pelo n8n (abaixo) |
+| `whatsapp-avilaops-com-web` | `ghcr.io/avilaops/whatsapp.avilaops.com:sha-37c1e59…` desde 09/10/2026 16:05 UTC (build no `apps-noclient`) | rede `edge` `172.31.0.15:8080`, sem domínio e sem bloco no Caddy; a tela de conexão chega ao navegador pelo n8n (abaixo) |
 
 "Por id" é imagem fixada por digest pelo deploy (o `docker ps` mostra só o id).
 Os três contêineres `cifra-*` foram recriados em 06/10/2026 (tarefa 146) e os
@@ -374,6 +374,15 @@ Atualização de 09/10/2026 (tarde), WhatsApp pelo n8n:
   desconectar para trocar de número. O webhook é público e repassa para
   `GET /pareamento` do `whatsapp-avilaops-com-web`; quem autoriza é o convite de
   15 minutos (detalhes no README do repositório `whatsapp.avilaops.com`).
+- Desde 09/10/2026 16:05 UTC o `whatsapp-avilaops-com-web` (imagem `sha-37c1e59…`)
+  mantém **vários números**, um por sessão: a `principal` em `/dados/sessao` e as
+  outras em `/dados/sessoes/<id>` (pasta criada à mão no volume, dono `node`),
+  até `MAXIMO_DE_SESSOES` (5). `DESTINOS` ganhou `canal` (canal Avila Ops
+  Tecnologia); cópia do `.env` anterior em
+  `/opt/backups/whatsapp-avilaops-com.env.bak-20261009-antes-canal`. Para aplicar
+  mudança de `.env`: `docker compose -f docker-compose.yml -f
+  /var/lib/avilaops/deploy/whatsapp.avilaops.com/image.yml up -d` (sem o segundo
+  arquivo o compose tenta baixar `:latest` e o GHCR recusa).
 - O workflow "WhatsApp Status - Agendador" passou a conferir a conexão e a enviar
   pelo `whatsapp-avilaops-com-web`. **O `evolution-avilaops-com-web` não é mais
   chamado por nenhum workflow** e está sem número pareado; continua no ar, com o
