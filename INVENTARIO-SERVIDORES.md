@@ -347,7 +347,7 @@ rodando e 2 parados.
 | `cifra-cifra-calculadora-1` | por id (`40410e0001ed`) | `127.0.0.1:3011` |
 | `minas-espetinhos-app-1` | por id (`ghcr.io/avilaops/app.comandeiro.com.br@sha256:bfe4aede…`) | `127.0.0.1:3040` |
 | `evolution-avilaops-com-web` | `evoapicloud/evolution-api:v2.3.7` | rede `edge` `172.31.0.14:8080`, sem domínio e sem bloco no Caddy |
-| `whatsapp-avilaops-com-web` | `ghcr.io/avilaops/whatsapp.avilaops.com:sha-5e9ef42…` (build no `apps-noclient`) | rede `edge` `172.31.0.15:8080`, sem domínio e sem bloco no Caddy |
+| `whatsapp-avilaops-com-web` | `ghcr.io/avilaops/whatsapp.avilaops.com:sha-5500b62…` desde 09/10/2026 16:00 UTC (build no `apps-noclient`) | rede `edge` `172.31.0.15:8080`, sem domínio e sem bloco no Caddy; a tela de conexão chega ao navegador pelo n8n (abaixo) |
 
 "Por id" é imagem fixada por digest pelo deploy (o `docker ps` mostra só o id).
 Os três contêineres `cifra-*` foram recriados em 06/10/2026 (tarefa 146) e os
@@ -361,6 +361,23 @@ instância se chama `status`. Limite de 1 GB de memória mais 1 GB de swap desde
 09/10/2026 (era 640 MB; o container foi morto por falta de memória ao publicar
 Status com imagem para todos os contatos). O `docker ps` dessa data mostra 18 contêineres rodando; a
 contagem do título e as tabelas são as de 07/10/2026 e não foram refeitas.
+
+Atualização de 09/10/2026 (tarde), WhatsApp pelo n8n:
+
+- `n8n.avilaops.com/form` e `/form/` (antes 404) redirecionam, no bloco do n8n do
+  `Caddyfile`, para `/webhook/whatsapp-entrada`, que manda para
+  `/form/whatsapp-status` (agendar post) com o número conectado ou para
+  `/form/whatsapp-parear` (conectar) sem ele. Cópias do `Caddyfile` em
+  `/opt/backups/Caddyfile.bak-20261009-antes-form-indice` e `-antes-form-entrada`.
+- `/form/whatsapp-parear` (login do n8n) abre a tela de conexão em
+  `/webhook/whatsapp-conexao?t=<convite>`: QR code, entrar com número de telefone e
+  desconectar para trocar de número. O webhook é público e repassa para
+  `GET /pareamento` do `whatsapp-avilaops-com-web`; quem autoriza é o convite de
+  15 minutos (detalhes no README do repositório `whatsapp.avilaops.com`).
+- O workflow "WhatsApp Status - Agendador" passou a conferir a conexão e a enviar
+  pelo `whatsapp-avilaops-com-web`. **O `evolution-avilaops-com-web` não é mais
+  chamado por nenhum workflow** e está sem número pareado; continua no ar, com o
+  banco `evolution_avilaops_com` no dump diário, até decisão de removê-lo.
 
 ### Bancos em container
 
