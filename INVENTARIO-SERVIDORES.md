@@ -323,8 +323,9 @@ Atualização de 09/10/2026: entrou o `evolution-avilaops-com-web` (Evolution AP
 gateway não-oficial de WhatsApp), em `/opt/evolution-avilaops-com`, com compose
 versionado em `applications/evolution-avilaops-com/`. Só o n8n nativo (seção 4)
 o chama, em `http://172.31.0.14:8080`, para publicar Status do WhatsApp; a
-instância se chama `status`. Limite de 640 MB de memória (usava 212 MB logo
-depois de subir). O `docker ps` dessa data mostra 18 contêineres rodando; a
+instância se chama `status`. Limite de 1 GB de memória mais 1 GB de swap desde
+09/10/2026 (era 640 MB; o container foi morto por falta de memória ao publicar
+Status com imagem para todos os contatos). O `docker ps` dessa data mostra 18 contêineres rodando; a
 contagem do título e as tabelas são as de 07/10/2026 e não foram refeitas.
 
 ### Bancos em container
