@@ -70,3 +70,24 @@ bash -n /usr/local/bin/.sync-r2.sh.novo && chown root:root /usr/local/bin/.sync-
   || rm -f /usr/local/bin/.sync-r2.sh.novo
 sha256sum /usr/local/bin/sync-r2.sh
 ```
+
+## `evolution-avilaops-com/`
+
+Compose da Evolution API (gateway não-oficial de WhatsApp), instalado em
+`/opt/evolution-avilaops-com` (`root:root`; `.env` em modo 600). Não passa pelo
+`avila-deploy`: é imagem de terceiro com tag fixa (`evoapicloud/evolution-api:v2.3.7`), sem
+build e sem domínio público. Só o n8n nativo a chama, em `http://172.31.0.14:8080`, para
+publicar Status do WhatsApp (instância `status`).
+
+O `.env.example` é o `.env` instalado sem os dois segredos (senha da role
+`evolution_avilaops_com` e `AUTHENTICATION_API_KEY`), que são gerados no servidor. Para mudar
+o compose ou o `.env`: cópia do instalado em `/opt/backups/`, `scp`, e:
+
+```bash
+ssh applications 'cd /opt/evolution-avilaops-com && docker compose config -q && docker compose up -d'
+ssh applications 'curl -s -m 5 http://172.31.0.14:8080/'    # 200 com a versão
+```
+
+O banco fica no Postgres do host e entra no dump diário (`backup-todos-bancos.sh`). A sessão
+do WhatsApp fica no volume `evolution-avilaops-com-instances`; sem ele o número precisa ser
+pareado de novo (`GET /instance/connect/status` devolve o QR).
