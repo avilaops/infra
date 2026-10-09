@@ -177,7 +177,9 @@ cmp ~/.local/bin/build-pesado /usr/local/bin/build-pesado    # as duas cópias s
 
 O instalador recusa (código 65) commit que não esteja em `origin/main` e troca
 cada arquivo de forma atômica; build em andamento segue com a versão que já
-abriu. Sai com 73 se não conseguir gravar num destino (sem `sudo`, por exemplo).
+abriu. Sai com 73 se não conseguir gravar num destino (sem `sudo`, por exemplo);
+confere todos antes de trocar o primeiro, então nesse caso as duas cópias ficam
+como estavam.
 
 ## Histórico
 

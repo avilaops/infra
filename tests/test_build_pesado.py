@@ -368,9 +368,140 @@ class InstalarBuildPesado(unittest.TestCase):
         self.assertEqual([p.name for p in outro.parent.iterdir()], ['build-pesado'])
         self.assertEqual(resultado.stdout.count('build-pesado instalado em '), 2)
 
-    def test_padrao_inclui_usr_local_bin(self):
-        texto = INSTALADOR.read_text()
-        self.assertIn('$HOME/.local/bin/build-pesado:/usr/local/bin/build-pesado', texto)
+    def sudo_falso(self, de, para):
+        """Poe no PATH um `sudo` que registra a chamada e, se nao for mandado
+        recusar, roda o comando como o proprio usuario, com os caminhos sob
+        `de` reescritos para `para` e sem trocar o dono."""
+        pasta = self.root / 'sudo-falso'
+        pasta.mkdir()
+        sudo = pasta / 'sudo'
+        sudo.write_text(
+            '#!/usr/bin/env bash\n'
+            'printf "%s\\n" "$*" >> "$SUDO_LOG"\n'
+            '[[ "${SUDO_RECUSA-}" != 1 ]] || { echo "sudo: a password is required" >&2; exit 1; }\n'
+            '[[ "$1" != -n ]] || shift\n'
+            '[[ "${SUDO_FALHA-}" != "$1" ]] || { echo "$1: falha simulada" >&2; exit 1; }\n'
+            'args=()\n'
+            'while (( $# )); do\n'
+            '  case $1 in -o|-g) shift 2; continue ;; esac\n'
+            '  args+=("${1/#$SUDO_DE/$SUDO_PARA}"); shift\n'
+            'done\n'
+            'exec "${args[@]}"\n')
+        sudo.chmod(0o755)
+        self.sudo_log = self.root / 'sudo.log'
+        return dict(os.environ, BUILD_PESADO_REPO=str(self.repo), SUDO_LOG=str(self.sudo_log),
+                    SUDO_DE=str(de), SUDO_PARA=str(para), PATH=f'{pasta}:{os.environ["PATH"]}')
+
+    def rodar(self, env, **extra):
+        return subprocess.run(['bash', str(INSTALADOR)], env=dict(env, **extra), text=True,
+                              capture_output=True, timeout=60)
+
+    def pasta_sem_escrita(self):
+        if os.geteuid() == 0:
+            self.skipTest('root grava em qualquer pasta: o ramo sudo nao e exercitado')
+        pasta = self.root / 'ro/bin'
+        pasta.mkdir(parents=True)
+        pasta.chmod(0o555)
+        self.addCleanup(pasta.chmod, 0o755)
+        return pasta
+
+    def test_padrao_instala_em_local_bin_e_em_usr_local_bin(self):
+        if os.access('/usr/local/bin', os.W_OK):
+            self.skipTest('/usr/local/bin gravavel: o teste escreveria na copia real')
+        home = self.root / 'home'
+        raiz = self.root / 'raiz/usr/local/bin'
+        env = self.sudo_falso('/usr/local/bin', raiz)
+        env.pop('BUILD_PESADO_DESTINO', None)
+        resultado = self.rodar(env, HOME=str(home))
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
+        do_usuario = home / '.local/bin/build-pesado'
+        self.assertIn(f'a partir do commit {self.revisado}.', do_usuario.read_text())
+        self.assertEqual((raiz / 'build-pesado').read_bytes(), do_usuario.read_bytes())
+        self.assertEqual([p.name for p in raiz.iterdir()], ['build-pesado'])
+        chamadas = self.sudo_log.read_text()
+        self.assertIn('-o root -g root', chamadas)
+        self.assertIn(' /usr/local/bin/build-pesado\n', chamadas)
+        self.assertNotIn(str(home), chamadas)
+
+    def test_pasta_sem_escrita_e_instalada_com_sudo(self):
+        pasta = self.pasta_sem_escrita()
+        real = self.root / 'ro-real'
+        env = self.sudo_falso(pasta, real)
+        resultado = self.rodar(env, BUILD_PESADO_DESTINO=f'{self.destino}:{pasta}/build-pesado')
+        self.assertEqual(resultado.returncode, 0, resultado.stderr)
+        self.assertEqual((real / 'build-pesado').read_bytes(), self.destino.read_bytes())
+        self.assertTrue(os.access(real / 'build-pesado', os.X_OK))
+        self.assertEqual([p.name for p in real.iterdir()], ['build-pesado'])
+        self.assertEqual(list(pasta.iterdir()), [])
+        for linha in self.sudo_log.read_text().splitlines():
+            self.assertTrue(linha.startswith('-n '), linha)
+
+    def test_sem_sudo_sai_com_73_sem_trocar_nenhum_destino(self):
+        """Ressalva 1 da tarefa 261: falha no segundo destino nao troca o primeiro."""
+        pasta = self.pasta_sem_escrita()
+        env = self.sudo_falso(pasta, self.root / 'ro-real')
+        for ordem in (f'{self.destino}:{pasta}/build-pesado', f'{pasta}/build-pesado:{self.destino}'):
+            with self.subTest(ordem=ordem):
+                resultado = self.rodar(env, BUILD_PESADO_DESTINO=ordem, SUDO_RECUSA='1')
+                self.assertEqual(resultado.returncode, 73, resultado.stderr)
+                self.assertEqual(resultado.stdout, '')
+                self.assertIn('sem sudo sem senha', resultado.stderr)
+                self.assertIn('Nenhum destino foi trocado', resultado.stderr)
+                self.assertTrue(self.destino.is_symlink())
+                self.assertEqual([p.name for p in self.destino.parent.iterdir()], ['build-pesado'])
+                self.assertEqual(list(pasta.iterdir()), [])
+        self.assertFalse((self.root / 'ro-real').exists())
+
+    def test_falha_ao_preparar_com_sudo_nao_troca_nenhum_destino(self):
+        pasta = self.pasta_sem_escrita()
+        env = self.sudo_falso(pasta, self.root / 'ro-real')
+        resultado = self.rodar(env, BUILD_PESADO_DESTINO=f'{self.destino}:{pasta}/build-pesado',
+                               SUDO_FALHA='install')
+        self.assertEqual(resultado.returncode, 73, resultado.stderr)
+        self.assertIn('install: falha simulada', resultado.stderr)
+        self.assertIn('Nenhum destino foi trocado', resultado.stderr)
+        self.assertNotIn('sem sudo', resultado.stderr)
+        self.assertTrue(self.destino.is_symlink())
+        self.assertEqual([p.name for p in self.destino.parent.iterdir()], ['build-pesado'])
+
+    def test_falha_no_rename_diz_quais_destinos_ja_foram_trocados(self):
+        pasta = self.pasta_sem_escrita()
+        real = self.root / 'ro-real'
+        env = self.sudo_falso(pasta, real)
+        resultado = self.rodar(env, BUILD_PESADO_DESTINO=f'{self.destino}:{pasta}/build-pesado',
+                               SUDO_FALHA='mv')
+        self.assertEqual(resultado.returncode, 73, resultado.stderr)
+        self.assertIn(f'Ja trocados: {self.destino}.', resultado.stderr)
+        self.assertFalse(self.destino.is_symlink())
+        self.assertEqual(list(real.iterdir()), [], 'sobrou copia temporaria')
+
+    def test_falha_em_pasta_gravavel_sai_com_73_e_nao_culpa_o_sudo(self):
+        """Ressalva 4 da tarefa 261: o ramo sem sudo saia com 1 e a mensagem presumia a causa."""
+        (self.root / 'arquivo').write_text('nao sou pasta\n')
+        ocupado = self.root / 'ocupado/build-pesado'
+        ocupado.mkdir(parents=True)
+        for ruim in (self.root / 'arquivo/bin/build-pesado', ocupado):
+            with self.subTest(destino=ruim):
+                env = dict(os.environ, BUILD_PESADO_REPO=str(self.repo),
+                           BUILD_PESADO_DESTINO=f'{self.destino}:{ruim}')
+                resultado = self.rodar(env)
+                self.assertEqual(resultado.returncode, 73, resultado.stderr)
+                self.assertIn('Nenhum destino foi trocado', resultado.stderr)
+                self.assertNotIn('sudo', resultado.stderr)
+                self.assertTrue(self.destino.is_symlink())
+                self.assertEqual([p.name for p in self.destino.parent.iterdir()], ['build-pesado'])
+        self.assertEqual(list(ocupado.iterdir()), [])
+
+    def test_destino_sem_nenhum_caminho_e_erro_de_uso(self):
+        """Ressalva 3 da tarefa 261: ':' saia com 0 sem instalar nada."""
+        for vazio in (':', '::'):
+            with self.subTest(destino=vazio):
+                env = dict(os.environ, BUILD_PESADO_REPO=str(self.repo), BUILD_PESADO_DESTINO=vazio)
+                resultado = self.rodar(env)
+                self.assertEqual(resultado.returncode, 64, resultado.stderr)
+                self.assertEqual(resultado.stdout, '')
+                self.assertIn('BUILD_PESADO_DESTINO', resultado.stderr)
+        self.assertTrue(self.destino.is_symlink())
 
 
 if __name__ == '__main__':

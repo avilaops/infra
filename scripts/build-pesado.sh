@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Um build pesado por vez no servidor dos agentes (creators, 4 GB de RAM), com
-# teto de heap no Node. Instalado como ~/.local/bin/build-pesado por
-# scripts/instalar-build-pesado.sh (copia de um commit ja enviado a main).
+# teto de heap no Node. Instalado como ~/.local/bin/build-pesado e
+# /usr/local/bin/build-pesado por scripts/instalar-build-pesado.sh (copias
+# iguais de um commit ja enviado a main).
 #
 # Uso: build-pesado <comando> [argumentos...]
 #   build-pesado npm run build
