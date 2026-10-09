@@ -1,8 +1,10 @@
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,6 +13,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'rotinas-openclaw'))
 import ciclo_roadmap  # noqa: E402
 import limpeza_disco  # noqa: E402
+import suite_da_main  # noqa: E402
 import varredura_repos  # noqa: E402
 import vigia_saude  # noqa: E402
 
@@ -488,6 +491,35 @@ class VigiaSuite(unittest.TestCase):
             self.assertTrue(ruim, texto)
             self.assertIn('ilegível', detalhe)
         self.assertIsNone(self.suite(None)[0])
+
+    def test_falhas_que_nao_e_lista_e_estado_ilegivel(self):
+        for campos in ({'saida': 1, 'falhas': 5}, {'saida': 0, 'falhas': 5}, {'saida': 1, 'falhas': 'FAIL: x'},
+                       {'saida': 1, 'falhas': {'a': 1}}):
+            ruim, detalhe = self.suite(self.estado(**campos))
+            self.assertTrue(ruim, campos)
+            self.assertIn('ilegível', detalhe)
+        ruim, detalhe = self.suite(self.estado(saida=1, falhas=None))  # sem a lista: falhou, sem os nomes
+        self.assertTrue(ruim)
+        self.assertIn('falhou (saída 1)', detalhe)
+        self.assertEqual(self.suite(self.estado(saida=1, falhas=[5, None]))[1].split('; ')[1:], ['5', 'None'])
+
+    def test_falhas_que_nao_e_lista_nao_derruba_o_vigia_e_abre_tarefa(self):
+        agora = datetime.now(timezone.utc).isoformat(timespec='seconds')  # main() usa a hora real
+        abre, fecha = roda_o_vigia(estado_da_suite=json.dumps({'quando': agora, 'saida': 1, 'falhas': 5}))
+        self.assertIn('ilegível', self.chaves(abre)['vigia:suite-main'][3])
+        self.assertNotIn('vigia:suite-main', self.chaves(fecha))
+
+    def test_arquivo_que_nao_e_utf8_e_estado_ilegivel_e_alerta(self):
+        with tempfile.TemporaryDirectory() as base, \
+                mock.patch.object(vigia_saude, 'SUITE_ESTADO', Path(base) / 'suite-main'):
+            (Path(base) / 'suite-main').write_bytes(b'\xff\xfe{{')
+            texto = vigia_saude.estado_da_suite()
+            self.assertIsNotNone(texto)  # None seria "sem leitura": nunca abriria tarefa
+            ruim, detalhe = self.suite(texto)
+            self.assertTrue(ruim)
+            self.assertIn('ilegível', detalhe)
+            abre, fecha = roda_o_vigia(estado_da_suite=texto)
+            self.assertIn('vigia:suite-main', self.chaves(abre))
 
     def test_le_o_arquivo_de_estado_e_a_idade_do_link(self):
         with tempfile.TemporaryDirectory() as base, \
@@ -1643,6 +1675,31 @@ class PublicaRotinas(unittest.TestCase):
         self.publica()
         self.assertEqual(self.suite_guardada()['commit'], novo)
 
+    def test_conferencia_com_falha_e_repetida_em_1_h_e_nao_em_24_h(self):
+        agora = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
+
+        def e_hora(saida, minutos):
+            estado = {'commit': 'a' * 40, 'saida': saida, 'quando': agora - timedelta(minutes=minutos)}
+            return suite_da_main.e_hora(estado, 'a' * 40, agora)
+        self.assertEqual((suite_da_main.REPETE_H, suite_da_main.INTERVALO_H), (1, 24))
+        self.assertFalse(e_hora(1, 59))
+        self.assertTrue(e_hora(1, 60))
+        self.assertTrue(e_hora(124, 61))  # interrompida pelo limite também é falha
+        self.assertFalse(e_hora(0, 61))
+        self.assertFalse(e_hora(0, 23 * 60 + 59))
+        self.assertTrue(e_hora(0, 24 * 60))
+
+        # De ponta a ponta: falha do momento (a suíte de agora passa) some na rodada depois de 1 h.
+        self.com_o_conferidor()
+        self.publica()
+        boa = self.suite_guardada()
+        for minutos, roda in ((30, False), (61, True)):
+            ruim = {**boa, 'saida': 124, 'estourou': True, 'quando':
+                    (datetime.now(timezone.utc) - timedelta(minutes=minutos)).isoformat(timespec='seconds')}
+            self.estado_da_suite.write_text(json.dumps(ruim))
+            self.publica()
+            self.assertEqual(self.suite_guardada()['saida'], 0 if roda else 124, minutos)
+
     def test_teste_fora_das_rotinas_que_falha_fica_no_estado_e_nao_derruba_o_publicador(self):
         # O publicador só roda tests/test_rotinas_openclaw.py: o resto da suíte só a conferência vê.
         self.escreve('tests/test_outro.py', self.TESTE_BOM.replace('pass', 'self.fail("venceu com o relogio")'))
@@ -1682,6 +1739,116 @@ class PublicaRotinas(unittest.TestCase):
         self.publica(ROTINAS_SUITE_LIMITE_S='1')
         guardada = self.suite_guardada()
         self.assertEqual((guardada['saida'], guardada['estourou']), (124, True))
+
+    def test_conferencia_morta_por_sinal_apaga_a_pasta_mata_a_suite_e_nao_grava(self):
+        # O job morto no limite de tempo deixava suite-main-* (1,5 MB) em /tmp a cada rodada.
+        temporarios, pid = Path(self.tmp.name) / 'tmp', Path(self.tmp.name) / 'pid-da-suite'
+        temporarios.mkdir()
+        self.escreve('tests/test_lento.py', 'import os\nimport time\nfrom pathlib import Path\n' + self.TESTE_BOM.replace(
+            'pass', 'Path(os.environ["PID_DA_SUITE"]).write_text(str(os.getpid()))\n        time.sleep(60)'))
+        self.com_o_conferidor()
+        self.publica(ROTINAS_SUITE_ESTADO=str(self.estado_da_suite) + '.outro', ROTINAS_SUITE_LIMITE_S='1')
+        for sinal in (signal.SIGTERM, signal.SIGHUP):
+            pid.unlink(missing_ok=True)
+            p = subprocess.Popen(
+                [sys.executable, str(self.SCRIPT.with_name('suite_da_main.py')), '--forca'],
+                env={**os.environ, 'ROTINAS_PUBLICADO': str(self.base), 'TMPDIR': str(temporarios),
+                     'ROTINAS_SUITE_ESTADO': str(self.estado_da_suite), 'PID_DA_SUITE': str(pid)},
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                prazo = time.monotonic() + 30
+                while not (pid.exists() and pid.read_text()) and time.monotonic() < prazo:
+                    time.sleep(0.05)
+                self.assertTrue(pid.exists(), 'a suíte não começou')
+                self.assertEqual([s.name[:11] for s in temporarios.iterdir()], ['suite-main-'])
+                p.send_signal(sinal)
+                self.assertEqual(p.wait(timeout=20), 128 + sinal)
+            finally:
+                p.kill()
+                p.wait()
+            self.assertEqual(list(temporarios.iterdir()), [])
+            self.assertFalse(self.estado_da_suite.exists())
+            with self.assertRaises(ProcessLookupError):  # a suíte não fica órfã rodando
+                os.kill(int(pid.read_text()), 0)
+
+    def test_sobra_de_conferencia_com_mais_de_1_h_e_apagada_no_comeco(self):
+        temporarios = Path(self.tmp.name) / 'tmp'
+        velha, nova, alheia = (temporarios / n for n in ('suite-main-velha', 'suite-main-nova', 'outra-velha'))
+        ha_2_h = time.time() - 2 * 3600
+        for pasta in (velha, nova, alheia):
+            (pasta / 'codigo').mkdir(parents=True)
+            (pasta / 'codigo' / 'a.py').write_text('x\n')
+            subprocess.run(['chmod', '-R', 'a-w', str(pasta)], check=True)  # como sobra de versão publicada
+            if pasta != nova:
+                os.utime(pasta, (ha_2_h, ha_2_h))
+        self.com_o_conferidor()
+        r = self.publica(TMPDIR=str(temporarios))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.suite_guardada()['saida'], 0)
+        self.assertEqual(sorted(p.name for p in temporarios.iterdir()), ['outra-velha', 'suite-main-nova'])
+
+    def test_temporarios_dos_testes_ficam_na_pasta_da_conferencia_e_somem_com_ela(self):
+        temporarios = Path(self.tmp.name) / 'tmp'
+        temporarios.mkdir()
+        self.escreve('tests/test_sujo.py', 'import tempfile\n' + self.TESTE_BOM.replace(
+            'pass', 'self.assertIn("suite-main-", tempfile.mkdtemp())  # e deixa a pasta para trás'))
+        self.com_o_conferidor()
+        self.publica(TMPDIR=str(temporarios))
+        guardada = self.suite_guardada()
+        self.assertEqual((guardada['saida'], guardada['testes']), (0, 2), guardada)
+        self.assertEqual(list(temporarios.iterdir()), [])
+
+    def test_estado_e_gravado_por_temporario_de_nome_proprio_que_nao_sobra(self):
+        # O nome fixo (suite-main.novo) embaralhava duas conferências ao mesmo tempo.
+        arquivo = self.estado_da_suite
+        nomes = []
+        de_verdade = os.replace
+        with mock.patch.object(suite_da_main.os, 'replace',
+                               side_effect=lambda de, para: (nomes.append(Path(de).name), de_verdade(de, para))):
+            suite_da_main.guarda(arquivo, {'saida': 0, 'n': 1})
+            suite_da_main.guarda(arquivo, {'saida': 0, 'n': 2})
+        self.assertEqual(len(set(nomes)), 2)
+        self.assertEqual(json.loads(arquivo.read_text())['n'], 2)
+        self.assertEqual(arquivo.stat().st_mode & 0o777, 0o644)
+        with mock.patch.object(suite_da_main.os, 'replace', side_effect=OSError('disco cheio')), \
+                self.assertRaises(OSError):
+            suite_da_main.guarda(arquivo, {'saida': 1, 'n': 3})
+        self.assertEqual(json.loads(arquivo.read_text())['n'], 2)  # o estado antigo fica
+        self.assertEqual([p.name for p in arquivo.parent.iterdir()], ['suite-main'])
+
+    # A conferência cabe no que sobra do job (120 s), ou fica para a rodada seguinte
+
+    def test_limites_da_conferencia_cabem_no_job_do_publicador(self):
+        script = self.SCRIPT.read_text()
+        self.assertIn('JOB_LIMITE_S="${ROTINAS_JOB_LIMITE_S:-120}"', script)
+        self.assertIn('FOLGA_S=10 ', script)
+        self.assertIn('timeout 10 git -C "$repo" archive "$commit" "$PASTA" "$TESTES" | timeout 10 tar', script)
+        self.assertEqual(suite_da_main.LIMITE_EXTRAI_S, 10)
+        # rodada sem publicação: extrair (archive + tar) e a suíte no limite acabam antes do teto
+        self.assertLessEqual(2 * suite_da_main.LIMITE_EXTRAI_S + suite_da_main.LIMITE_S, 120 - 10 - 5)
+
+    def test_sem_tempo_sobrando_no_job_a_conferencia_fica_para_a_rodada_seguinte(self):
+        commit = self.com_o_conferidor()
+        r = self.publica(ROTINAS_JOB_LIMITE_S='30')  # sobram 20 s, menos que o mínimo de 30
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f'"publicado":true,"commit":"{commit}"', r.stdout)
+        self.assertFalse(self.estado_da_suite.exists())
+        self.assertIn('"publicado":false', self.publica().stdout)  # na seguinte, com tempo, confere
+        self.assertEqual(self.suite_guardada()['commit'], commit)
+
+    def test_conferencia_que_passa_do_teto_do_job_e_interrompida_sem_mudar_o_resumo(self):
+        temporarios = Path(self.tmp.name) / 'tmp'
+        temporarios.mkdir()
+        self.escreve('tests/test_lento.py', 'import time\n' + self.TESTE_BOM.replace('pass', 'time.sleep(60)'))
+        commit = self.com_o_conferidor()
+        inicio = time.monotonic()
+        r = self.publica(TMPDIR=str(temporarios), ROTINAS_JOB_LIMITE_S='13', ROTINAS_CONFERE_MIN_S='1')
+        self.assertLess(time.monotonic() - inicio, 13)  # teto de 3 s, bem antes do limite da suíte (75 s)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.count('\n'), 1)
+        self.assertIn(f'"publicado":true,"commit":"{commit}"', r.stdout)
+        self.assertFalse(self.estado_da_suite.exists())  # sem estado: a rodada seguinte tenta de novo
+        self.assertEqual(list(temporarios.iterdir()), [])
 
     def test_sem_versao_publicada_ou_sem_o_commit_nao_grava_estado(self):
         r = self.confere()

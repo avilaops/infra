@@ -147,20 +147,35 @@ roda a suíte **inteira** do commit publicado (todos os `tests/test_*.py`, extra
 `repo.git` do publicador para uma pasta temporária, apagada no fim) quando:
 
 - o commit publicado mudou desde a última conferência (até 10 min depois de cada push); ou
-- a última conferência tem mais de 24 h (`ROTINAS_SUITE_INTERVALO_H`).
+- a última conferência tem mais de 24 h (`ROTINAS_SUITE_INTERVALO_H`); ou
+- a última conferência falhou há mais de 1 h (`ROTINAS_SUITE_REPETE_H`): falha do
+  momento (suíte lenta por aperto de memória, por exemplo) não fica um dia em alerta.
 
 O resultado (hora, commit, código de saída, quantidade de testes, até 8 testes que
 falharam) fica em `~/.local/state/rotinas-openclaw/suite-main` (`ROTINAS_SUITE_ESTADO`),
-gravado de uma vez. O conferidor não abre tarefa e nunca muda a saída nem o resumo do
-publicador: quem lê o arquivo é o vigia, a cada 15 min, e abre `vigia:suite-main` para a
+gravado de uma vez (temporário de nome próprio na mesma pasta + troca). O conferidor não
+abre tarefa e nunca muda a saída nem o resumo do publicador: quem lê o arquivo é o vigia, a cada 15 min, e abre `vigia:suite-main` para a
 raia `ops` com o nome dos testes que falharam. A tarefa fecha sozinha na conferência
 seguinte que passar (o push da correção já dispara uma).
 
-- A suíte leva uns 25 s e tem limite de 75 s (`ROTINAS_SUITE_LIMITE_S`; o job do
-  publicador tem 120 s). Passou do limite, fica gravada como falha (saída 124) e alerta.
+- A suíte leva uns 25 s e tem limite de 75 s (`ROTINAS_SUITE_LIMITE_S`); extrair o commit
+  tem 10 s para o `git archive` e 10 s para o `tar`. Passou do limite, a suíte inteira é
+  morta (ela e os processos dos testes), fica gravada como falha (saída 124) e alerta.
+- A conferência só usa o tempo que sobra do job do publicador: o teto é
+  `ROTINAS_JOB_LIMITE_S` (120 s, igual ao limite do job no OpenClaw) menos o que a rodada
+  já gastou e 10 s de folga para o resumo. Com menos de 30 s sobrando ela nem começa;
+  interrompida no teto, não grava nada. Nos dois casos a rodada seguinte (10 min) tenta
+  de novo, e o resumo e a saída do publicador não mudam.
+- Interrompida por sinal (`SIGTERM`, `SIGHUP`: teto do publicador ou job morto), mata a
+  suíte e apaga a pasta extraída antes de sair. Os temporários dos próprios testes ficam
+  dentro dessa pasta (`TMPDIR`) e somem junto. Sobra de `suite-main-*` com mais de 1 h
+  (morte sem chance de limpar) é apagada no começo da conferência seguinte.
 - Se o job for morto antes de gravar (ou o `repo.git` não tiver o commit, ou `/tmp`
   estiver cheio), o estado antigo fica e a rodada seguinte tenta de novo; passadas 30 h
   sem conferência o vigia alerta do mesmo jeito.
+- Arquivo de estado estragado (JSON inválido, bytes que não são UTF-8, `falhas` que não é
+  lista) é alerta "ilegível", nunca derruba o vigia nem fica mudo; só falha de leitura do
+  arquivo (permissão, E/S) conta como sem leitura.
 - O alerta diz que a `main` está vermelha **hoje**; conserto é commit e push, como
   qualquer outro. Enquanto ela estiver vermelha por um teste das rotinas, nenhum commit
   novo é publicado.

@@ -320,12 +320,15 @@ def rotinas(execucoes, publicado, remoto, agora):
 
 
 def estado_da_suite():
-    """Texto do arquivo que o suite_da_main.py grava; "" se não existe, None se ilegível."""
+    """Texto do arquivo que o suite_da_main.py grava; "" se não existe, None se não deu para ler.
+
+    Byte que não é UTF-8 vira "\ufffd": o arquivo foi lido e está estragado, e quem diz
+    "ilegível" (com alerta) é o `suite`. `None` é só para falha de leitura, que pode passar."""
     try:
-        return SUITE_ESTADO.read_text()
+        return SUITE_ESTADO.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         return ""
-    except (OSError, UnicodeError):
+    except OSError:
         return None
 
 
@@ -359,11 +362,14 @@ def suite(texto, horas_publicado, agora):
         codigo, commit = int(estado["saida"]), str(estado.get("commit") or "?")[:12]
         if quando.tzinfo is None:
             raise ValueError("data sem fuso")
-    except (ValueError, KeyError, TypeError, AttributeError):
+        falhas = estado.get("falhas") or []
+        if not isinstance(falhas, list):
+            raise TypeError("falhas não é lista")
+        falhas = [str(f)[:160] for f in falhas[:8]]
+    except (ValueError, KeyError, TypeError, AttributeError, OverflowError):
         return True, f"{SUITE_ESTADO} ilegível: {texto.strip()[:120]}"
     rotulo = f"suíte da main {commit}, conferida em {quando:%d/%m %H:%M} UTC"
     if codigo:
-        falhas = [str(f)[:160] for f in estado.get("falhas") or []][:8]
         o_que = "passou do limite de tempo e foi interrompida" if codigo == 124 else f"saída {codigo}"
         return True, f"{rotulo}: falhou ({o_que})" + ("; " + "; ".join(falhas) if falhas else "")
     horas = (agora - quando).total_seconds() / 3600

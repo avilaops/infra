@@ -7,7 +7,8 @@ seguinte, que aí não era publicado: foi assim de 08/10/2026 05:30 UTC até a t
 
 Quem chama é o `publica_rotinas.sh`, no fim de cada rodada (a cada 10 min), sem job
 próprio. Na maioria das vezes sai sem fazer nada: só roda quando o commit publicado
-mudou ou a última conferência tem mais de SUITE_INTERVALO_H. Extrai o commit inteiro
+mudou, a última conferência tem mais de SUITE_INTERVALO_H ou ela falhou há mais de
+SUITE_REPETE_H (falha do momento não fica um dia inteiro em alerta). Extrai o commit inteiro
 do repositório do publicador (`repo.git`) numa pasta temporária, roda
 `python3 -m unittest discover -s tests` e guarda o resultado num arquivo de estado.
 Não abre tarefa: quem lê o estado e abre `vigia:suite-main` é o `vigia_saude.py`.
@@ -21,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -32,8 +34,14 @@ PUBLICADO = Path(os.environ.get("ROTINAS_PUBLICADO", Path.home() / ".local/share
 ESTADO = Path(os.environ.get("ROTINAS_SUITE_ESTADO",
                              Path.home() / ".local/state/rotinas-openclaw/suite-main"))
 INTERVALO_H = float(os.environ.get("ROTINAS_SUITE_INTERVALO_H", 24))
+# Depois de uma conferência com falha, tenta de novo neste intervalo.
+REPETE_H = float(os.environ.get("ROTINAS_SUITE_REPETE_H", 1))
 # O job do publicador tem 120 s; a suíte leva uns 25 s.
 LIMITE_S = int(os.environ.get("ROTINAS_SUITE_LIMITE_S", 75))
+# Extrair o commit (1,5 MB) leva menos de 1 s.
+LIMITE_EXTRAI_S = 10
+PREFIXO = "suite-main-"
+SOBRA_MAX_H = 1
 
 
 def le_estado(arquivo):
@@ -49,24 +57,70 @@ def le_estado(arquivo):
 
 
 def e_hora(estado, commit, agora):
-    return (estado is None or estado.get("commit") != commit
-            or (agora - estado["quando"]).total_seconds() >= INTERVALO_H * 3600)
+    if estado is None or estado.get("commit") != commit:
+        return True
+    intervalo = REPETE_H if estado["saida"] else INTERVALO_H
+    return (agora - estado["quando"]).total_seconds() >= intervalo * 3600
+
+
+def apaga(pasta):
+    subprocess.run(["chmod", "-R", "u+w", str(pasta)], capture_output=True)
+    shutil.rmtree(pasta, ignore_errors=True)
+
+
+def apaga_sobras():
+    """Pastas de conferência interrompida sem chance de limpar (SIGKILL, falta de energia)."""
+    corte = time.time() - SOBRA_MAX_H * 3600
+    for sobra in Path(tempfile.gettempdir()).glob(PREFIXO + "*"):
+        try:
+            velha = sobra.is_dir() and not sobra.is_symlink() and sobra.lstat().st_mtime < corte
+        except OSError:
+            continue
+        if velha:
+            apaga(sobra)
+
+
+def mata(suite):
+    """Mata o grupo inteiro da suíte (ela e o que os testes tiverem deixado rodando)."""
+    try:
+        os.killpg(suite.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    suite.wait()
 
 
 def roda_a_suite(repo, commit):
     """(código de saída, saída do unittest) da suíte daquele commit, numa pasta temporária."""
-    pasta = tempfile.mkdtemp(prefix="suite-main-")
+    apaga_sobras()
+    pasta = Path(tempfile.mkdtemp(prefix=PREFIXO))
+    suite = None
     try:
+        # Os temporários dos próprios testes ficam dentro da pasta: somem junto com ela.
+        codigo, temporarios = pasta / "codigo", pasta / "tmp"
+        codigo.mkdir()
+        temporarios.mkdir()
         arquivo = subprocess.run(["git", "-C", str(repo), "archive", commit],
-                                 capture_output=True, timeout=30, check=True)
-        subprocess.run(["tar", "-x", "-C", pasta], input=arquivo.stdout, timeout=30, check=True)
-        r = subprocess.run(["timeout", str(LIMITE_S), sys.executable, "-m", "unittest", "discover", "-s", "tests"],
-                           cwd=pasta, capture_output=True, text=True, timeout=LIMITE_S + 10,
-                           env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
-        return r.returncode, r.stdout + r.stderr
+                                 capture_output=True, timeout=LIMITE_EXTRAI_S, check=True)
+        subprocess.run(["tar", "-x", "-C", str(codigo)], input=arquivo.stdout,
+                       timeout=LIMITE_EXTRAI_S, check=True)
+        # Sessão própria: no limite (ou no sinal) morre a suíte inteira, com os filhos dos testes.
+        suite = subprocess.Popen([sys.executable, "-m", "unittest", "discover", "-s", "tests"],
+                                 cwd=codigo, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                 start_new_session=True,
+                                 env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": str(temporarios)})
+        try:
+            saida = suite.communicate(timeout=LIMITE_S)[0]
+            return suite.returncode, saida
+        except subprocess.TimeoutExpired:
+            mata(suite)
+            try:
+                return 124, suite.communicate(timeout=5)[0]
+            except subprocess.TimeoutExpired:  # filho de teste em outra sessão segurando a saída
+                return 124, ""
     finally:
-        subprocess.run(["chmod", "-R", "u+w", pasta], capture_output=True)
-        shutil.rmtree(pasta, ignore_errors=True)
+        if suite is not None:
+            mata(suite)
+        apaga(pasta)
 
 
 def resultado(commit, codigo, saida, agora, duracao):
@@ -81,9 +135,16 @@ def resultado(commit, codigo, saida, agora, duracao):
 def guarda(arquivo, estado):
     """Grava de uma vez (temporário na mesma pasta + troca): leitor nunca vê pela metade."""
     arquivo.parent.mkdir(parents=True, exist_ok=True)
-    novo = arquivo.with_name(arquivo.name + ".novo")
-    novo.write_text(json.dumps(estado, ensure_ascii=False) + "\n")
-    os.replace(novo, arquivo)
+    # Nome próprio de cada gravação: conferência à mão junto com a do publicador não embaralha.
+    descritor, novo = tempfile.mkstemp(dir=arquivo.parent, prefix=arquivo.name + ".", suffix=".novo")
+    try:
+        with os.fdopen(descritor, "w", encoding="utf-8") as f:
+            f.write(json.dumps(estado, ensure_ascii=False) + "\n")
+        os.chmod(novo, 0o644)
+        os.replace(novo, arquivo)
+    except BaseException:
+        Path(novo).unlink(missing_ok=True)
+        raise
 
 
 def main():
@@ -92,6 +153,9 @@ def main():
     ap.add_argument("--simula", action="store_true",
                     help="roda e imprime, sem gravar o estado (o vigia não fica sabendo)")
     a = ap.parse_args()
+    # Job morto no limite de tempo: sai pelo `finally`, que apaga a pasta extraída.
+    for sinal in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sinal, lambda numero, _: sys.exit(128 + numero))
 
     try:
         commit = os.readlink(PUBLICADO / "atual").rsplit("/", 1)[-1]

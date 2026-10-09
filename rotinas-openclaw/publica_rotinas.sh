@@ -14,7 +14,9 @@
 # versão anterior. A versão publicada fica sem permissão de escrita.
 #
 # No fim de cada rodada chama o suite_da_main.py da versão publicada, que uma vez por
-# dia roda a suíte inteira daquele commit e deixa o resultado para o vigia.
+# dia roda a suíte inteira daquele commit e deixa o resultado para o vigia. A conferência
+# só usa o tempo que sobra do job (ROTINAS_JOB_LIMITE_S): sem folga, fica para a rodada
+# seguinte.
 #
 # Uso: publica_rotinas.sh
 set -euo pipefail
@@ -26,6 +28,10 @@ RAMO="${ROTINAS_RAMO:-main}"
 PASTA="rotinas-openclaw"
 TESTES="tests/test_rotinas_openclaw.py"
 GUARDAR="${ROTINAS_GUARDAR:-3}"
+# Limite do job no OpenClaw; a conferência da suíte tem de acabar antes dele.
+JOB_LIMITE_S="${ROTINAS_JOB_LIMITE_S:-120}"
+FOLGA_S=10  # para o resumo sair depois da conferência
+CONFERE_MIN_S="${ROTINAS_CONFERE_MIN_S:-30}"  # com menos do que isso sobrando, nem começa
 
 mkdir -p "$BASE/releases"
 exec 9>"$BASE/.trava"
@@ -57,11 +63,15 @@ GIT_TERMINAL_PROMPT=0 timeout 60 git -C "$repo" fetch --quiet --no-tags "$ORIGEM
 commit="$(git -C "$repo" rev-parse --verify --quiet "refs/heads/$RAMO^{commit}")"
 
 # Suíte inteira do commit publicado, uma vez por dia (suite_da_main.py decide se é hora
-# e guarda o resultado para o vigia). Nunca muda a saída nem o resumo desta rodada.
+# e guarda o resultado para o vigia). Nunca muda a saída nem o resumo desta rodada: tem
+# teto de tempo (o que sobra do job, contado por $SECONDS), e interrompida no teto ela
+# apaga a pasta extraída, não grava nada e a rodada seguinte tenta de novo.
 confere_suite() {
     local conferidor="$BASE/releases/$commit/$PASTA/suite_da_main.py"
+    local teto=$((JOB_LIMITE_S - SECONDS - FOLGA_S))
     [ -f "$conferidor" ] || return 0
-    ROTINAS_PUBLICADO="$BASE" python3 "$conferidor" >/dev/null 2>&1 || true
+    [ "$teto" -ge "$CONFERE_MIN_S" ] || return 0
+    ROTINAS_PUBLICADO="$BASE" timeout -k 5 "$teto" python3 "$conferidor" >/dev/null 2>&1 || true
 }
 
 anterior="$(readlink "$BASE/atual" 2>/dev/null || true)"
@@ -75,7 +85,7 @@ fi
 if [ ! -d "$BASE/releases/$commit/$PASTA" ]; then
     tmp="$(mktemp -d "$BASE/releases/.parcial-XXXXXX")"
     trap 'apaga "$tmp"' EXIT
-    git -C "$repo" archive "$commit" "$PASTA" "$TESTES" | tar -x -C "$tmp"
+    timeout 10 git -C "$repo" archive "$commit" "$PASTA" "$TESTES" | timeout 10 tar -x -C "$tmp"
 
     # Confere a sintaxe sem executar nada e sem gravar __pycache__.
     for arquivo in "$tmp/$PASTA"/*.py; do
