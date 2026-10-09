@@ -91,3 +91,19 @@ ssh applications 'curl -s -m 5 http://172.31.0.14:8080/'    # 200 com a versão
 O banco fica no Postgres do host e entra no dump diário (`backup-todos-bancos.sh`). A sessão
 do WhatsApp fica no volume `evolution-avilaops-com-instances`; sem ele o número precisa ser
 pareado de novo (`GET /instance/connect/status` devolve o QR).
+
+## `whatsapp-avilaops-com/`
+
+Compose do serviço próprio de envio do WhatsApp (código em `avilaops/whatsapp.avilaops.com`),
+instalado em `/opt/whatsapp-avilaops-com`. Envia para destinos cadastrados no `.env` (a conversa
+do Nicolas e o canal da Avila Ops); só o n8n nativo chama, em `http://172.31.0.15:8080`.
+
+Publica-se como os outros containers (`BUILD-MANUAL.md`, destino em
+`deploy/production/whatsapp.avilaops.com.conf`). **A primeira subida foi à mão**: o
+`avila-deploy-local` consulta a imagem do container em uso e para quando ele ainda não existe.
+A imagem foi carregada por ele, o `image.yml` escrito em
+`/var/lib/avilaops/deploy/whatsapp.avilaops.com/` e o `docker compose up -d` rodado com os dois
+arquivos. Dali em diante o deploy normal funciona.
+
+Sem banco: o único estado é a sessão do WhatsApp, no volume `whatsapp-avilaops-com-sessao`.
+Parear de novo: `POST /parear` (ver o README do serviço).

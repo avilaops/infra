@@ -1,0 +1,53 @@
+# Envio de mensagens do WhatsApp da Avila Ops (conversa do Nicolas e canal),
+# em /opt/whatsapp-avilaops-com no servidor applications. Codigo em
+# avilaops/whatsapp.avilaops.com. Segue a Norma de Plataforma: todo nome sai de
+# `whatsapp.avilaops.com` e nenhuma porta e publicada no host.
+#
+# Nao tem dominio publico nem bloco no Caddy: so o n8n (nativo no host) chama,
+# em http://172.31.0.15:8080.
+#
+# Nao usa banco. O unico estado e a sessao do WhatsApp, no volume.
+name: whatsapp-avilaops-com
+
+services:
+  web:
+    # O deploy troca esta linha pela imagem do commit
+    # (/var/lib/avilaops/deploy/whatsapp.avilaops.com/image.yml).
+    image: ghcr.io/avilaops/whatsapp.avilaops.com:latest
+    container_name: whatsapp-avilaops-com-web
+    restart: unless-stopped
+    env_file: [.env]
+    # O Node roda como PID 1; sem isto o SIGTERM do deploy demora 10 s.
+    init: true
+    expose: ["8080"]
+    networks:
+      edge:
+        # IP fixo: o n8n roda no host e nao resolve nome de container.
+        ipv4_address: 172.31.0.15
+    volumes:
+      # Credenciais do pareamento. Perder este volume obriga a parear de novo.
+      - sessao:/dados
+    # Cada pedido e uma mensagem so; em repouso o processo usa perto de 100 MB.
+    # O teto protege os vizinhos, que tem pouca memoria livre.
+    mem_limit: 384m
+    memswap_limit: 384m
+    labels:
+      avilaops.domain: whatsapp.avilaops.com
+      avilaops.stack: whatsapp
+      avilaops.tier: web
+      avilaops.backup: "false"
+      avilaops.owner: nicolas
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  sessao:
+    name: whatsapp-avilaops-com-sessao
+
+networks:
+  edge:
+    external: true
