@@ -24,7 +24,10 @@ def roda_o_vigia(**trocas):
     # quem passa `limpeza=None` troca o `limpeza_disco.limpa` por conta própria.
     # Hora relativa: o main() compara com a hora real, e data fixa vence em 26 h (BACKUP_MAX_HORAS).
     rodada_boa = f"{(datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(timespec='seconds')} saida=0\n"
+    suite_boa = json.dumps({'quando': (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(timespec='seconds'),
+                            'commit': 'a' * 40, 'saida': 0, 'testes': 150, 'falhas': []})
     padrao = {'log_do_backup': rodada_boa, 'execucoes_do_publicador': [],
+              'estado_da_suite': suite_boa, 'horas_da_publicacao': 5.0,
               'limpeza': {'rodou': False},
               'commit_publicado': 'a' * 40, 'commit_da_main': 'a' * 40, **trocas}
     if padrao['limpeza'] is None:
@@ -435,6 +438,89 @@ class VigiaRotinas(unittest.TestCase):
     def test_sem_leitura_nao_abre_nem_encerra_tarefa(self):
         abre, fecha = roda_o_vigia(execucoes_do_publicador=None, commit_da_main=None)
         self.assertNotIn('vigia:rotinas-desatualizadas', {**self.chaves(abre), **self.chaves(fecha)})
+
+
+class VigiaSuite(unittest.TestCase):
+    """Alerta `vigia:suite-main`: a suíte da main publicada falhou ou parou de ser conferida."""
+    AGORA = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
+
+    def estado(self, ha=2, **campos):
+        return json.dumps({'quando': (self.AGORA - timedelta(hours=ha)).isoformat(timespec='seconds'),
+                           'commit': 'a' * 40, 'saida': 0, 'testes': 150, 'falhas': [], **campos})
+
+    def suite(self, texto, horas_publicado=5.0):
+        return vigia_saude.suite(texto, horas_publicado, self.AGORA)
+
+    def chaves(self, chamadas):
+        return {c.args[0]: c.args for c in chamadas.call_args_list}
+
+    def test_suite_que_passou_nao_alerta(self):
+        self.assertEqual(self.suite(self.estado()),
+                         (False, 'suíte da main aaaaaaaaaaaa, conferida em 09/10 10:00 UTC: 150 testes, sem falha'))
+
+    def test_suite_que_falhou_alerta_e_diz_o_teste(self):
+        ruim, detalhe = self.suite(self.estado(saida=1, falhas=['FAIL: test_x (tests.T.test_x)']))
+        self.assertTrue(ruim)
+        self.assertIn('falhou (saída 1); FAIL: test_x', detalhe)
+
+    def test_suite_interrompida_pelo_tempo_alerta(self):
+        ruim, detalhe = self.suite(self.estado(saida=124, testes=None))
+        self.assertTrue(ruim)
+        self.assertIn('limite de tempo', detalhe)
+
+    def test_conferencia_parada_ha_mais_de_30_h_alerta(self):
+        self.assertFalse(self.suite(self.estado(ha=29))[0])
+        ruim, detalhe = self.suite(self.estado(ha=31))
+        self.assertTrue(ruim)
+        self.assertIn('há 31 h (máx. 30): a conferência diária não rodou', detalhe)
+
+    def test_sem_estado_espera_a_primeira_conferencia_e_depois_alerta(self):
+        self.assertIsNone(self.suite('', horas_publicado=0.2)[0])
+        self.assertIsNone(self.suite('', horas_publicado=None)[0])
+        ruim, detalhe = self.suite('', horas_publicado=3)
+        self.assertTrue(ruim)
+        self.assertIn('nunca foi conferida', detalhe)
+
+    def test_estado_ilegivel_alerta_e_sem_leitura_nao_decide(self):
+        for texto in ('{pela metade', '[]', json.dumps({'quando': '2026-10-09T10:00:00', 'saida': 0}),
+                      json.dumps({'quando': '2026-10-09T10:00:00+00:00', 'saida': 'x'})):
+            ruim, detalhe = self.suite(texto)
+            self.assertTrue(ruim, texto)
+            self.assertIn('ilegível', detalhe)
+        self.assertIsNone(self.suite(None)[0])
+
+    def test_le_o_arquivo_de_estado_e_a_idade_do_link(self):
+        with tempfile.TemporaryDirectory() as base, \
+                mock.patch.object(vigia_saude, 'SUITE_ESTADO', Path(base) / 'suite-main'), \
+                mock.patch.object(vigia_saude, 'ROTINAS_PUBLICADO', Path(base)):
+            self.assertEqual(vigia_saude.estado_da_suite(), '')
+            self.assertIsNone(vigia_saude.horas_da_publicacao())
+            (Path(base) / 'suite-main').write_text('x\n')
+            os.symlink('releases/' + 'a' * 40, Path(base) / 'atual')
+            self.assertEqual(vigia_saude.estado_da_suite(), 'x\n')
+            self.assertLess(vigia_saude.horas_da_publicacao(), 0.1)
+            (Path(base) / 'suite-main').unlink()
+            (Path(base) / 'suite-main').mkdir()
+            self.assertIsNone(vigia_saude.estado_da_suite())
+
+    def test_abre_tarefa_para_ops_e_fecha_quando_normaliza(self):
+        agora = datetime.now(timezone.utc).isoformat(timespec='seconds')  # main() usa a hora real
+        falhou = json.dumps({'quando': agora, 'commit': 'a' * 40, 'saida': 1, 'testes': 150,
+                             'falhas': ['FAIL: test_x (tests.T.test_x)']})
+        abre, fecha = roda_o_vigia(estado_da_suite=falhou)
+        aberta = self.chaves(abre)['vigia:suite-main']
+        self.assertEqual(aberta[1], 'ops')
+        self.assertIn('FAIL: test_x', aberta[3])
+        self.assertNotIn('vigia:suite-main', self.chaves(fecha))
+
+        abre, fecha = roda_o_vigia()
+        self.assertNotIn('vigia:suite-main', self.chaves(abre))
+        self.assertIn('sem falha', self.chaves(fecha)['vigia:suite-main'][1])
+
+    def test_sem_leitura_nao_abre_nem_encerra_tarefa(self):
+        for texto, horas in ((None, 5.0), ('', 0.1)):
+            abre, fecha = roda_o_vigia(estado_da_suite=texto, horas_da_publicacao=horas)
+            self.assertNotIn('vigia:suite-main', {**self.chaves(abre), **self.chaves(fecha)})
 
 
 class LimpezaDisco(unittest.TestCase):
@@ -870,6 +956,7 @@ class PublicaRotinas(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         raiz = Path(self.tmp.name)
         self.origem, self.base = raiz / 'origem', raiz / 'publicado'
+        self.estado_da_suite = raiz / 'estado' / 'suite-main'
         self.git('init', '--quiet', '-b', 'main', str(self.origem), cwd=raiz)
         self.escreve(self.TESTES, self.TESTE_BOM)
         self.commita('rotina.py', 'print("v1")\n')
@@ -893,9 +980,23 @@ class PublicaRotinas(unittest.TestCase):
         self.git('commit', '--quiet', '-m', nome)
         return self.git('rev-parse', 'HEAD')
 
-    def publica(self, origem=None):
-        env = {**os.environ, 'ROTINAS_PUBLICADO': str(self.base), 'ROTINAS_ORIGEM': str(origem or self.origem)}
+    def publica(self, origem=None, **extra):
+        env = {**os.environ, 'ROTINAS_PUBLICADO': str(self.base), 'ROTINAS_ORIGEM': str(origem or self.origem),
+               'ROTINAS_SUITE_ESTADO': str(self.estado_da_suite), **extra}
         return subprocess.run(['bash', str(self.SCRIPT)], env=env, capture_output=True, text=True)
+
+    def confere(self, *args, **extra):
+        env = {**os.environ, 'ROTINAS_PUBLICADO': str(self.base),
+               'ROTINAS_SUITE_ESTADO': str(self.estado_da_suite), **extra}
+        return subprocess.run([sys.executable, str(self.SCRIPT.with_name('suite_da_main.py')), *args],
+                              env=env, capture_output=True, text=True)
+
+    def com_o_conferidor(self):
+        """Põe na origem o suite_da_main.py de verdade (as outras origens de teste não têm)."""
+        return self.commita('suite_da_main.py', self.SCRIPT.with_name('suite_da_main.py').read_text())
+
+    def suite_guardada(self):
+        return json.loads(self.estado_da_suite.read_text())
 
     def atual(self):
         return (self.base / 'atual' / 'rotinas-openclaw' / 'rotina.py').read_text()
@@ -999,6 +1100,92 @@ class PublicaRotinas(unittest.TestCase):
         self.assertIn(commits[-1], guardadas)
         self.assertIn(commits[-2], guardadas)
         self.assertLessEqual(len(guardadas), 3)  # as sem escrita também saem na limpeza
+
+    # Conferência diária da suíte do commit publicado (suite_da_main.py, chamado pelo publicador)
+
+    def test_publicador_confere_a_suite_do_commit_publicado_sem_mudar_o_resumo(self):
+        commit = self.com_o_conferidor()
+        temporarios = Path(self.tmp.name) / 'tmp'  # a pasta da suíte extraída não pode sobrar
+        temporarios.mkdir()
+        r = self.publica(TMPDIR=str(temporarios))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.count('\n'), 1)  # o resumo do job continua uma linha só
+        self.assertIn(f'"publicado":true,"commit":"{commit}"', r.stdout)
+        guardada = self.suite_guardada()
+        self.assertEqual((guardada['commit'], guardada['saida'], guardada['testes']), (commit, 0, 1))
+        self.assertEqual(list(temporarios.iterdir()), [])
+
+    def test_origem_sem_o_conferidor_publica_do_mesmo_jeito(self):
+        self.assertEqual(self.publica().returncode, 0)
+        self.assertFalse(self.estado_da_suite.exists())
+
+    def test_suite_so_roda_de_novo_com_commit_novo_ou_passado_o_intervalo(self):
+        self.com_o_conferidor()
+        self.publica()
+        primeira = self.suite_guardada()
+        self.assertIn('"publicado":false', self.publica().stdout)
+        self.assertEqual(self.suite_guardada(), primeira)  # mesmo commit, dentro das 24 h: não roda
+
+        velha = {**primeira, 'quando': (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat(timespec='seconds')}
+        self.estado_da_suite.write_text(json.dumps(velha))
+        self.publica()
+        self.assertGreater(self.suite_guardada()['quando'], velha['quando'])
+
+        novo = self.commita('rotina.py', 'print("v2")\n')
+        self.publica()
+        self.assertEqual(self.suite_guardada()['commit'], novo)
+
+    def test_teste_fora_das_rotinas_que_falha_fica_no_estado_e_nao_derruba_o_publicador(self):
+        # O publicador só roda tests/test_rotinas_openclaw.py: o resto da suíte só a conferência vê.
+        self.escreve('tests/test_outro.py', self.TESTE_BOM.replace('pass', 'self.fail("venceu com o relogio")'))
+        commit = self.com_o_conferidor()
+        r = self.publica()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(os.readlink(self.base / 'atual'), f'releases/{commit}')
+        guardada = self.suite_guardada()
+        self.assertEqual((guardada['saida'], guardada['testes']), (1, 2))
+        self.assertEqual(len(guardada['falhas']), 1)
+        self.assertIn('FAIL: test_ok', guardada['falhas'][0])
+        with mock.patch.object(vigia_saude, 'SUITE_ESTADO', self.estado_da_suite):
+            ruim, detalhe = vigia_saude.suite(vigia_saude.estado_da_suite(), 1.0, datetime.now(timezone.utc))
+        self.assertTrue(ruim)
+        self.assertIn('test_outro', detalhe)
+
+    def test_conferencia_a_mao_forca_simula_e_devolve_o_codigo(self):
+        self.com_o_conferidor()
+        self.publica()
+        antes = self.estado_da_suite.read_text()
+        r = self.confere()
+        self.assertEqual((r.returncode, json.loads(r.stdout)['conferiu']), (0, False))
+        self.escreve('tests/test_outro.py', self.TESTE_BOM.replace('pass', 'self.fail("venceu")'))
+        self.commita('rotina.py', 'print("v2")\n')
+        self.publica(ROTINAS_SUITE_ESTADO=str(self.estado_da_suite) + '.outro')  # publica sem tocar no estado
+        r = self.confere('--simula')
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn('venceu', r.stderr)
+        self.assertTrue(json.loads(r.stdout)['simulacao'])
+        self.assertEqual(self.estado_da_suite.read_text(), antes)  # simulação não grava
+        self.assertEqual(self.confere('--forca').returncode, 1)
+        self.assertEqual(self.suite_guardada()['saida'], 1)
+
+    def test_suite_que_passa_do_limite_e_interrompida_e_fica_como_falha(self):
+        self.escreve('tests/test_lento.py', 'import time\n' + self.TESTE_BOM.replace('pass', 'time.sleep(30)'))
+        self.com_o_conferidor()
+        self.publica(ROTINAS_SUITE_LIMITE_S='1')
+        guardada = self.suite_guardada()
+        self.assertEqual((guardada['saida'], guardada['estourou']), (124, True))
+
+    def test_sem_versao_publicada_ou_sem_o_commit_nao_grava_estado(self):
+        r = self.confere()
+        self.assertEqual(r.returncode, 2)
+        self.assertIn('sem versão publicada', r.stdout)
+        self.com_o_conferidor()
+        self.publica(ROTINAS_SUITE_ESTADO=str(self.estado_da_suite) + '.outro')
+        os.remove(self.base / 'atual')
+        os.symlink('releases/' + 'c' * 40, self.base / 'atual')  # commit que o repo.git não tem
+        r = self.confere()
+        self.assertEqual(r.returncode, 2)
+        self.assertFalse(self.estado_da_suite.exists())
 
 
 if __name__ == '__main__':

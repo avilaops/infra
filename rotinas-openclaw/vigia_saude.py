@@ -3,8 +3,9 @@
 
 Mede memória, swap, disco, o gateway do OpenClaw (ativo, memória, reinícios,
 mortes por sinal/OOM), a validade do certificado do Caddy, a última rodada do
-backup dos bancos do `applications` (lida por SSH) e se as rotinas publicadas
-acompanham a `main` do GitHub. Toda medida vai para
+backup dos bancos do `applications` (lida por SSH), se as rotinas publicadas
+acompanham a `main` do GitHub e o resultado da conferência diária da suíte da `main`
+publicada (`suite_da_main.py`). Toda medida vai para
 `saude_medidas`; o quadro (`equipe_tarefas`, raia ops) só recebe tarefa quando um
 limite é ultrapassado, e a tarefa se encerra sozinha quando o problema passa.
 Depois de gravar a medida, chama a limpeza de disco (`limpeza_disco.py`), que só age
@@ -55,6 +56,11 @@ ROTINAS_PUBLICADO = Path(os.environ.get("ROTINAS_PUBLICADO",
                                         Path.home() / ".local/share/rotinas-openclaw"))
 ROTINAS_ORIGEM = os.environ.get("ROTINAS_ORIGEM", "git@github.com:avilaops/infra.git")
 ROTINAS_RAMO = os.environ.get("ROTINAS_RAMO", "main")
+# Suíte da main publicada (suite_da_main.py, chamado pelo publicador uma vez por dia)
+SUITE_ESTADO = Path(os.environ.get("ROTINAS_SUITE_ESTADO",
+                                   Path.home() / ".local/state/rotinas-openclaw/suite-main"))
+SUITE_MAX_HORAS = int(os.environ.get("VIGIA_SUITE_MAX_HORAS", 30))  # conferência diária + folga
+SUITE_ESPERA_HORAS = 2  # versão recém-publicada ainda sem a primeira conferência
 # Limpeza de disco (limpeza_disco.py): "1" apaga, "simula" só lista, "0" desliga
 LIMPEZA = os.environ.get("LIMPEZA_DISCO", "1")
 
@@ -311,6 +317,59 @@ def rotinas(execucoes, publicado, remoto, agora):
     return True, detalhe
 
 
+def estado_da_suite():
+    """Texto do arquivo que o suite_da_main.py grava; "" se não existe, None se ilegível."""
+    try:
+        return SUITE_ESTADO.read_text()
+    except FileNotFoundError:
+        return ""
+    except (OSError, UnicodeError):
+        return None
+
+
+def horas_da_publicacao():
+    """Horas desde que o link `atual` foi trocado; None se não deu para ler."""
+    try:
+        return max((datetime.now(timezone.utc).timestamp()
+                    - os.lstat(ROTINAS_PUBLICADO / "atual").st_mtime) / 3600, 0)
+    except OSError:
+        return None
+
+
+def suite(texto, horas_publicado, agora):
+    """(em alerta?, detalhe) da suíte da `main` publicada. Alerta `None`: não deu para ler.
+
+    O publicador só roda os testes no commit novo: teste que estraga com o relógio deixou
+    a `main` vermelha de 08/10/2026 05:30 UTC até alguém tentar o push seguinte. Alerta
+    quando a última conferência falhou, quando ela tem mais de SUITE_MAX_HORAS (parou de
+    rodar) e quando nunca houve nenhuma com a versão publicada há mais de
+    SUITE_ESPERA_HORAS."""
+    if texto is None:
+        return None, f"não foi possível ler {SUITE_ESTADO}"
+    if not texto.strip():
+        if horas_publicado is not None and horas_publicado > SUITE_ESPERA_HORAS:
+            return True, (f"a suíte da main publicada nunca foi conferida ({SUITE_ESTADO} não existe; "
+                          f"versão no ar há {horas_publicado:.0f} h)")
+        return None, "suíte da main publicada ainda sem a primeira conferência"
+    try:
+        estado = json.loads(texto)
+        quando = datetime.fromisoformat(estado["quando"])
+        codigo, commit = int(estado["saida"]), str(estado.get("commit") or "?")[:12]
+        if quando.tzinfo is None:
+            raise ValueError("data sem fuso")
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return True, f"{SUITE_ESTADO} ilegível: {texto.strip()[:120]}"
+    rotulo = f"suíte da main {commit}, conferida em {quando:%d/%m %H:%M} UTC"
+    if codigo:
+        falhas = [str(f)[:160] for f in estado.get("falhas") or []][:8]
+        o_que = "passou do limite de tempo e foi interrompida" if codigo == 124 else f"saída {codigo}"
+        return True, f"{rotulo}: falhou ({o_que})" + ("; " + "; ".join(falhas) if falhas else "")
+    horas = (agora - quando).total_seconds() / 3600
+    if horas > SUITE_MAX_HORAS:
+        return True, f"{rotulo}, há {horas:.0f} h (máx. {SUITE_MAX_HORAS}): a conferência diária não rodou"
+    return False, f"{rotulo}: {estado.get('testes')} testes, sem falha"
+
+
 def limpeza(simula):
     """Resultado da limpeza de disco. Falha dela (até de importação) vira `erro`:
     nunca derruba o vigia, que já gravou a medida e os alertas."""
@@ -347,13 +406,16 @@ def main():
     rotinas_ruim, rotinas_detalhe = rotinas(execucoes_do_publicador(), commit_publicado(),
                                             commit_da_main(), datetime.now(timezone.utc))
 
+    suite_ruim, suite_detalhe = suite(estado_da_suite(), horas_da_publicacao(), datetime.now(timezone.utc))
+
     # Mortes do gateway não se encerram sozinhas: alguém precisa olhar a causa.
     sem_auto_encerrar = {"vigia:gateway-morto"}
     # Sem leitura (SSH, GitHub ou gateway mudo) não abre nem encerra: uma oscilação de
     # rede não é falha, e também não prova que a falha passou. O backup sem leitura há
     # mais de BACKUP_MAX_HORAS já virou alerta acima.
     sem_leitura = {chave for chave, ruim in (("vigia:backup-applications", backup_ruim),
-                                             ("vigia:rotinas-desatualizadas", rotinas_ruim))
+                                             ("vigia:rotinas-desatualizadas", rotinas_ruim),
+                                             ("vigia:suite-main", suite_ruim))
                    if ruim is None}
     # chave -> (está em alerta?, pedido da tarefa, detalhe atual)
     checagens = {
@@ -380,6 +442,9 @@ def main():
         "vigia:rotinas-desatualizadas": (bool(rotinas_ruim),
                                          "Rotinas publicadas fora da main ou publicador com erro",
                                          rotinas_detalhe),
+        "vigia:suite-main": (bool(suite_ruim),
+                             "Suíte de testes da main publicada do infra falhou ou não foi conferida",
+                             suite_detalhe),
     }
     alertas = sorted(k for k, (ruim, _, _) in checagens.items() if ruim)
     agora = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
@@ -404,6 +469,7 @@ def main():
 
     print(json.dumps({"mem_disp_mb": mem_disp, "swap_pct": swap_pct, "folga_mb": folga, "disco_pct": disco_pct,
                       "gateway": gw, "cert_dias": cert, "backup": backup_detalhe, "rotinas": rotinas_detalhe,
+                      "suite": suite_detalhe,
                       "alertas": alertas,
                       "tarefas_novas": novas, "limpeza": limpeza(a.sem_banco)}, ensure_ascii=False))
     return 0

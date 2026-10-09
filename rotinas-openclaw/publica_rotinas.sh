@@ -13,6 +13,9 @@
 # passa) sai com código diferente de zero ANTES de mexer no link: os jobs seguem na
 # versão anterior. A versão publicada fica sem permissão de escrita.
 #
+# No fim de cada rodada chama o suite_da_main.py da versão publicada, que uma vez por
+# dia roda a suíte inteira daquele commit e deixa o resultado para o vigia.
+#
 # Uso: publica_rotinas.sh
 set -euo pipefail
 umask 022
@@ -53,9 +56,18 @@ GIT_TERMINAL_PROMPT=0 timeout 60 git -C "$repo" fetch --quiet --no-tags "$ORIGEM
     "+refs/heads/$RAMO:refs/heads/$RAMO"
 commit="$(git -C "$repo" rev-parse --verify --quiet "refs/heads/$RAMO^{commit}")"
 
+# Suíte inteira do commit publicado, uma vez por dia (suite_da_main.py decide se é hora
+# e guarda o resultado para o vigia). Nunca muda a saída nem o resumo desta rodada.
+confere_suite() {
+    local conferidor="$BASE/releases/$commit/$PASTA/suite_da_main.py"
+    [ -f "$conferidor" ] || return 0
+    ROTINAS_PUBLICADO="$BASE" python3 "$conferidor" >/dev/null 2>&1 || true
+}
+
 anterior="$(readlink "$BASE/atual" 2>/dev/null || true)"
 anterior="${anterior#releases/}"
 if [ "$anterior" = "$commit" ] && [ -d "$BASE/releases/$commit/$PASTA" ]; then
+    confere_suite
     printf '{"publicado":false,"commit":"%s"}\n' "$commit"
     exit 0
 fi
@@ -106,5 +118,6 @@ while IFS= read -r velha; do
 done < <(find "$BASE/releases" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%T@ %p\n' \
     | sort -rn | tail -n "+$((GUARDAR + 1))" | cut -d' ' -f2-)
 
+confere_suite
 printf '{"publicado":true,"commit":"%s","anterior":"%s","removidos":%s}\n' \
     "$commit" "$anterior" "$removidos"

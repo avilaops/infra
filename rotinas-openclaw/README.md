@@ -9,9 +9,10 @@ sim da cópia publicada da `main` do GitHub:
 |---|---|---|---|
 | `varredura_repos.py` | de hora em hora (min. 05) | Percorre `~/projetos`: branch atual, arquivos sem commit, branches `claude/…`/`openclaw/…`/`codex/…`, PRs abertos e CI | tabelas `repo_*`; página `~/.agents/shared/rotinas/repos.md` |
 | `ciclo_roadmap.py` | de hora em hora (min. 20) | Para cada projeto de `PROJETOS-ATIVOS.md`, mantém um item especificado e (se `ativo`) um em desenvolvimento, abrindo tarefas no quadro | tabela `roadmap_ciclo`, `equipe_tarefas`; página `~/.agents/shared/rotinas/roadmap.md` |
-| `vigia_saude.py` | a cada 15 min | Memória, swap, disco, gateway (ativo, memória, mortes por sinal/OOM), certificado de `agentes.avilaops.com`, última rodada do backup dos bancos do `applications` e se as rotinas publicadas acompanham a `main`. No fim, chama a limpeza de disco (`limpeza_disco.py`), que só age com o `/` acima de 75% | tabela `saude_medidas`; abre tarefa para `ops` só quando passa do limite; log da limpeza em `~/.local/state/rotinas-openclaw/limpeza-disco.log` |
+| `vigia_saude.py` | a cada 15 min | Memória, swap, disco, gateway (ativo, memória, mortes por sinal/OOM), certificado de `agentes.avilaops.com`, última rodada do backup dos bancos do `applications`, se as rotinas publicadas acompanham a `main` e o resultado da conferência diária da suíte (`suite_da_main.py`). No fim, chama a limpeza de disco (`limpeza_disco.py`), que só age com o `/` acima de 75% | tabela `saude_medidas`; abre tarefa para `ops` só quando passa do limite; log da limpeza em `~/.local/state/rotinas-openclaw/limpeza-disco.log` |
 | `backup_agentes.sh` | todo dia às 03:40 | Copia `openclaw.json`, exporta as rotinas, compacta os workspaces e faz `pg_dump` do banco `agentes`; confere cada arquivo | `~/backups/openclaw/AAAA-MM-DD/` (modo 700), 7 dias |
-| `publica_rotinas.sh` | a cada 10 min (min. 07, 17, …) | Busca a `main` do GitHub e, se mudou, confere a sintaxe, roda os testes das rotinas daquele commit, publica a pasta `rotinas-openclaw` e troca o link `atual` | `~/.local/share/rotinas-openclaw/` |
+| `publica_rotinas.sh` | a cada 10 min (min. 07, 17, …) | Busca a `main` do GitHub e, se mudou, confere a sintaxe, roda os testes das rotinas daquele commit, publica a pasta `rotinas-openclaw` e troca o link `atual`. No fim chama o `suite_da_main.py` | `~/.local/share/rotinas-openclaw/` |
+| `suite_da_main.py` | sem job próprio: o `publica_rotinas.sh` chama no fim de cada rodada, e ele só roda uma vez por dia ou quando o commit publicado muda | Extrai o commit publicado inteiro e roda a suíte toda (`python3 -m unittest discover -s tests`); não abre tarefa, quem alerta é o vigia (`vigia:suite-main`) | `~/.local/state/rotinas-openclaw/suite-main` |
 
 Nenhum deles chama agente. Quem gasta modelo é a equipe, ao executar as tarefas que
 estes scripts deixam `aberta` no quadro (o heartbeat do `coordinator` despacha uma
@@ -85,6 +86,8 @@ python3 limpeza_disco.py --limiar 50                           # simula a limpez
 python3 ciclo_roadmap.py --simula                              # mostra o que abriria
 BACKUP_DESTINO=/tmp/bk ./backup_agentes.sh                     # backup em outra pasta
 ROTINAS_PUBLICADO=/tmp/pub ./publica_rotinas.sh                # publica em outra pasta
+python3 suite_da_main.py --forca --simula                      # roda a suíte da main publicada, sem gravar
+ROTINAS_SUITE_ESTADO=/tmp/suite python3 vigia_saude.py --sem-banco   # o que o vigia diria de outro estado
 ```
 
 Todos imprimem uma linha JSON com o resultado e saem com código diferente de zero
@@ -100,6 +103,7 @@ quando falham, que é o que o cron do OpenClaw registra.
 | Gateway morto por sinal/OOM | qualquer morte desde a medida anterior | — |
 | Certificado público | menos de 14 dias | `VIGIA_CERT_MIN_DIAS` |
 | Backup dos bancos do `applications` (`vigia:backup-applications`) | última rodada com saída diferente de 0, sem rodada há mais de 26 h, ou log sem leitura por SSH há mais de 26 h | `VIGIA_BACKUP_MAX_HORAS`, `VIGIA_BACKUP_HOST`, `VIGIA_BACKUP_LOG`, `VIGIA_BACKUP_ESTADO` |
+| Suíte da `main` publicada (`vigia:suite-main`) | última conferência com falha (ou interrompida pelo tempo), sem conferência há mais de 30 h, ou versão no ar há mais de 2 h sem nenhuma conferência | `VIGIA_SUITE_MAX_HORAS`, `ROTINAS_SUITE_ESTADO` |
 | Rotinas publicadas (`vigia:rotinas-desatualizadas`) | job `Publica rotinas` com erro há mais de 60 min, ou link `atual` diferente da `main` do GitHub | `VIGIA_ROTINAS_ERRO_MAX_MIN`, `VIGIA_ROTINAS_TOLERANCIA_MIN`, `VIGIA_ROTINAS_JOB` |
 
 Tarefa aberta pelo vigia tem `chave` `vigia:<assunto>`: enquanto estiver aberta, novas
@@ -131,6 +135,38 @@ mesmo sem o GitHub. Sem resposta do GitHub ou do gateway, a medida não abre nem
 tarefa; o erro há mais de 60 min abre mesmo sem o GitHub. As duas leituras
 (`openclaw cron runs` e `git ls-remote`) têm limite de 10 s cada; estourou, conta como
 sem resposta.
+
+## Suíte da main publicada
+
+O publicador só roda os testes no commit novo, e só `tests/test_rotinas_openclaw.py`.
+Teste que estraga com o relógio (data fixa que vence) deixava a `main` vermelha sem
+ninguém ver até o push seguinte, que aí não era publicado: foi assim de 08/10/2026
+05:30 UTC até a tarefa 202. Por isso o `publica_rotinas.sh` chama, no fim de cada rodada,
+o `suite_da_main.py` da versão publicada. Ele sai na hora quando não há o que fazer e
+roda a suíte **inteira** do commit publicado (todos os `tests/test_*.py`, extraídos do
+`repo.git` do publicador para uma pasta temporária, apagada no fim) quando:
+
+- o commit publicado mudou desde a última conferência (até 10 min depois de cada push); ou
+- a última conferência tem mais de 24 h (`ROTINAS_SUITE_INTERVALO_H`).
+
+O resultado (hora, commit, código de saída, quantidade de testes, até 8 testes que
+falharam) fica em `~/.local/state/rotinas-openclaw/suite-main` (`ROTINAS_SUITE_ESTADO`),
+gravado de uma vez. O conferidor não abre tarefa e nunca muda a saída nem o resumo do
+publicador: quem lê o arquivo é o vigia, a cada 15 min, e abre `vigia:suite-main` para a
+raia `ops` com o nome dos testes que falharam. A tarefa fecha sozinha na conferência
+seguinte que passar (o push da correção já dispara uma).
+
+- A suíte leva uns 25 s e tem limite de 75 s (`ROTINAS_SUITE_LIMITE_S`; o job do
+  publicador tem 120 s). Passou do limite, fica gravada como falha (saída 124) e alerta.
+- Se o job for morto antes de gravar (ou o `repo.git` não tiver o commit, ou `/tmp`
+  estiver cheio), o estado antigo fica e a rodada seguinte tenta de novo; passadas 30 h
+  sem conferência o vigia alerta do mesmo jeito.
+- O alerta diz que a `main` está vermelha **hoje**; conserto é commit e push, como
+  qualquer outro. Enquanto ela estiver vermelha por um teste das rotinas, nenhum commit
+  novo é publicado.
+- À mão: `suite_da_main.py --forca` roda agora e grava; `--simula` roda e imprime sem
+  gravar (o vigia não fica sabendo). Sai com 0 se passou ou não era hora, 1 se a suíte
+  falhou, 2 se não deu para conferir.
 
 ## Limpeza de disco
 
