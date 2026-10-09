@@ -31,9 +31,13 @@ services:
       # obriga a parear o numero de novo.
       - instances:/evolution/instances
     # O servidor tem pouca memoria livre; o teto impede que a Evolution derrube
-    # os vizinhos. Swap igual ao limite = sem swap para o container.
-    mem_limit: 640m
-    memswap_limit: 640m
+    # os vizinhos. Com 640m o container foi morto por falta de memoria em
+    # 09/10/2026 ao publicar um Status com imagem para ~5,8 mil contatos (a
+    # Evolution dispara centenas de lotes ao mesmo tempo); com 1024m o mesmo
+    # envio passou, com pico observado de 542 MB. memswap = RAM + swap, entao
+    # o container pode usar ate 1 GB de swap alem do limite.
+    mem_limit: 1024m
+    memswap_limit: 2048m
     labels:
       avilaops.domain: evolution.avilaops.com
       avilaops.stack: evolution
