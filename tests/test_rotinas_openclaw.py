@@ -523,10 +523,9 @@ class VigiaSuite(unittest.TestCase):
             self.assertNotIn('vigia:suite-main', {**self.chaves(abre), **self.chaves(fecha)})
 
 
-class LimpezaDisco(unittest.TestCase):
-    """A limpeza só age acima do limiar, só apaga o que se refaz e nunca derruba o vigia.
-
-    Tudo falso: /tmp, /proc, estado, caches, medida do disco e comandos (npm, du, sudo)."""
+class AmbienteDaLimpeza:
+    """Tudo falso: /tmp, /proc, estado, caches, repositórios, medida do disco e comandos
+    (npm, du, sudo, docker, git, psql). Nenhum teste da limpeza encosta no servidor."""
     HORAS = 3600
 
     def setUp(self):
@@ -540,10 +539,20 @@ class LimpezaDisco(unittest.TestCase):
         self.comandos = []
         self.codigos = {}  # primeiro argumento -> código de saída
         self.depois = limpeza_disco.time.time() + 7 * self.HORAS  # tudo o que o teste cria já tem 7 h
+        self.tarde = self.depois + 48 * self.HORAS  # hora das etapas com prazo de 12 h ou 24 h
+        self.projetos, self.npx, self.logs = raiz / 'projetos', raiz / 'npx', raiz / 'claude-logs'
+        self.cache_node, self.store = self.base / 'node-compile-cache', raiz / 'pnpm-store'
+        self.imagens, self.conteineres = [], {}  # docker: imagens (dict) e contêiner -> id da imagem
+        self.repos = {}  # git: caminho do repositório -> respostas
+        self.quadro = ''  # psql: "repo pedido" das tarefas em_andamento
+        self.falha, self.indevidos = set(), []  # comandos que falham; comandos que a limpeza não pode mandar
+        self.addCleanup(lambda: self.assertEqual(self.indevidos, []))
         troca = mock.patch.multiple(
             limpeza_disco, TMP=self.base, RAIZES=(str(raiz),), PROC=self.proc, ESTADO=self.estado, APT_CACHE=self.apt,
             NPM_CACHE=raiz / 'npm', espaco=lambda: (100 * limpeza_disco.MB, 80 * limpeza_disco.MB, self.livre[0]),
-            comando=self.comando)
+            comando=self.comando, PROJETOS=self.projetos, NPX=self.npx, CLAUDE_LOGS=self.logs,
+            COMPILE_CACHE=self.cache_node, PNPM_STORE=self.store,
+            PROIBIDOS=tuple(str(raiz / p) for p in ('backups', 'docker', 'postgresql', '.openclaw', '.agents')))
         for p in (troca, mock.patch.object(limpeza_disco.shutil, 'which', return_value='/usr/bin/npm'),
                   mock.patch.object(limpeza_disco.time, 'time', lambda: self.depois)):
             p.start()
@@ -552,9 +561,81 @@ class LimpezaDisco(unittest.TestCase):
 
     def comando(self, args, timeout):
         self.comandos.append(' '.join(args))
+        if args[0] in self.falha or ' '.join(args[:2]) in self.falha:
+            return 1, 'falhou'
+        if args[0] == 'docker':
+            return self.docker(args[1:])
+        if args[0] == 'git':
+            return self.git(args[3], args[4:])
+        if args[0] == 'psql':
+            return 0, self.quadro
         if args[:3] == ['npm', 'cache', 'clean']:
             self.livre[0] += 5 * limpeza_disco.MB
         return self.codigos.get(args[0], 0), '7\t/x'
+
+    def imagem(self, nome, horas=30, conteiner=False, mb=100):
+        """Imagem no docker de mentira, criada `horas` antes de `self.depois`."""
+        ident = 'sha256:' + f'{len(self.imagens) + 1:064x}'
+        self.imagens.append({'id': ident, 'nome': nome, 'criada': self.depois - horas * self.HORAS, 'mb': mb})
+        if conteiner:
+            self.conteineres[f'{len(self.conteineres) + 1:064x}'] = ident
+        return ident
+
+    def docker(self, args):
+        if args[0] == 'images':
+            return 0, '\n'.join('\t'.join([i['id'], *i['nome'].rsplit(':', 1)]) for i in self.imagens)
+        if args[:2] == ['ps', '-aq']:
+            return 0, '\n'.join(self.conteineres)
+        if args[0] == 'inspect':
+            return 0, '\n'.join(self.conteineres[c] for c in args[3:])
+        if args[:2] == ['image', 'inspect']:
+            formato = '%Y-%m-%dT%H:%M:%S.123456789Z'
+            return 0, '\n'.join(
+                f"{i['id']}\t{datetime.fromtimestamp(i['criada'], timezone.utc).strftime(formato)}"
+                f"\t{i['mb'] * limpeza_disco.MB}" for i in self.imagens if i['id'] in args[4:])
+        if args[0] == 'rmi' and len(args) == 2:
+            achada = next((i for i in self.imagens if i['nome'] == args[1]), None)
+            if achada is None or achada['id'] in self.conteineres.values():
+                return 1, 'conflict: unable to remove'
+            self.imagens.remove(achada)
+            return 0, 'Untagged'
+        self.indevidos.append('docker ' + ' '.join(args))
+        return 1, 'comando inesperado'
+
+    def git(self, repo, args):
+        r = self.repos.get(repo)
+        if r is None:
+            return 128, 'fatal: not a git repository'
+        if args[0] == 'status':
+            return 0, r['status']
+        if args[0] == 'ls-files':
+            return 0, r['versionado']
+        if args[0] == 'check-ignore':
+            return (0 if r['ignorado'] else 1), ''
+        if args[0] == 'log':
+            return 0, str(int(r['commit']))
+        self.indevidos.append('git ' + ' '.join(args))
+        return 1, 'comando inesperado'
+
+    def repo(self, nome, **git):
+        """Repositório de mentira com .next e node_modules gerados, árvore limpa e commit antigo."""
+        pasta = self.projetos / nome
+        for arquivo in ('.git/HEAD', 'package.json', 'package-lock.json', 'src/pagina.tsx',
+                        '.next/server/pagina.js', 'node_modules/pacote/index.js'):
+            (pasta / arquivo).parent.mkdir(parents=True, exist_ok=True)
+            (pasta / arquivo).write_text('x' * 5000)
+        self.repos[str(pasta)] = {'status': '', 'versionado': '', 'ignorado': True,
+                                  'commit': self.depois - 7 * self.HORAS, **git}
+        return pasta
+
+    def arquivo(self, caminho, horas=None, lido=None):
+        """Arquivo mexido (e lido) há `horas` de `self.tarde`; sem `horas`, agora mesmo."""
+        caminho.parent.mkdir(parents=True, exist_ok=True)
+        caminho.write_text('x' * 5000)
+        if horas is not None:
+            os.utime(caminho, (self.tarde - (horas if lido is None else lido) * self.HORAS,
+                               self.tarde - horas * self.HORAS))
+        return caminho
 
     def build(self, nome, *extras, fonte=None):
         """Build como o CMake deixa: marca apontando a fonte (fora, por padrão) e CMakeFiles/."""
@@ -592,6 +673,11 @@ class LimpezaDisco(unittest.TestCase):
             return 30 if restam[0] >= 0 else 0
         return prazo
 
+
+
+class LimpezaDisco(AmbienteDaLimpeza, unittest.TestCase):
+    """A limpeza só age acima do limiar, só apaga o que se refaz e nunca derruba o vigia."""
+
     def test_abaixo_do_limiar_nao_faz_nada(self):
         self.build('t1/build')
         r = limpeza_disco.limpa(simula=False, limiar=80)
@@ -619,8 +705,8 @@ class LimpezaDisco(unittest.TestCase):
         self.assertTrue(fonte.exists())  # fonte e log ao lado do build ficam
         self.assertIn('npm cache clean --force', self.comandos)
         self.assertIn('sudo -n apt-get clean', self.comandos)
-        self.assertEqual({n: e['feito'] for n, e in r['etapas'].items()},
-                         {'npm_cache': True, 'tmp_cmake': True, 'apt': True})
+        self.assertEqual([n for n, e in r['etapas'].items() if e['feito']], ['npm_cache', 'tmp_cmake', 'apt'])
+        self.assertEqual(list(r['etapas']), [n for n, _ in limpeza_disco.ETAPAS])  # as demais não tinham o que apagar
         self.assertEqual((r['livre_antes_mb'], r['livre_depois_mb'], r['liberado_mb']), (20, 25, 5))
         self.assertEqual(r['etapas']['npm_cache']['liberado_mb'], 5)
         log = (self.estado / 'limpeza-disco.log').read_text()
@@ -944,6 +1030,428 @@ class LimpezaDisco(unittest.TestCase):
             _, fecha = roda_o_vigia(limpeza=None)
         limpa.assert_called_once_with(simula=False)
         self.assertTrue(fecha.called)  # a medida e o quadro já estavam gravados
+
+
+class LimpezaForaDoTmp(AmbienteDaLimpeza, unittest.TestCase):
+    """Etapas da tarefa 278 (docker, logs, _npx, store do pnpm, .next, node_modules): cada uma
+    só apaga com a trava de uso satisfeita, e caminho proibido não sai nem passado por engano."""
+
+    def etapa(self, etapa, simula=False, agora=None):
+        return etapa(simula, self.tarde if agora is None else agora, lambda: 30)
+
+    def cheio(self):
+        """Põe o `/` em 85%: acima dos 80% que liberam o node_modules."""
+        p = mock.patch.object(limpeza_disco, 'espaco',
+                              lambda: (100 * limpeza_disco.MB, 85 * limpeza_disco.MB, 15 * limpeza_disco.MB))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def motivos(self, r):
+        return {Path(m.get('pasta', m.get('imagem', ''))).name: m['motivo'] for m in r['mantidos']}
+
+    # --- (a) imagens Docker
+
+    def test_docker_tira_so_imagem_com_tag_sem_conteiner(self):
+        self.imagem('avilaops-app:531217e', mb=450)
+        self.imagem('lojas-db:teste', conteiner=True)
+        self.imagem('postgres:18-alpine')
+        self.imagem('<none>:<none>')
+        self.imagem('avilaops-app:novo', horas=1)
+        r = self.etapa(limpeza_disco.etapa_docker, agora=self.depois)
+        self.assertEqual([c for c in self.comandos if c.startswith('docker rmi')], ['docker rmi avilaops-app:531217e'])
+        self.assertEqual([i['nome'] for i in self.imagens],
+                         ['lojas-db:teste', 'postgres:18-alpine', '<none>:<none>', 'avilaops-app:novo'])
+        self.assertEqual(r['itens'], [{'imagem': 'avilaops-app:531217e', 'mb': 450}])
+        self.assertEqual(self.motivos(r), {'lojas-db:teste': 'tem contêiner', 'postgres:18-alpine': 'mantida de propósito',
+                                           'avilaops-app:novo': 'criada há 1.0 h (mín. 2)'})
+
+    def test_docker_outra_tag_da_imagem_guardada_tambem_fica(self):
+        ident = self.imagem('postgres:18-alpine')
+        self.imagens.append({**self.imagens[0], 'nome': 'banco-local:1'})  # mesma imagem, outro nome
+        r = self.etapa(limpeza_disco.etapa_docker, agora=self.depois)
+        self.assertEqual(r['itens'], [])
+        self.assertEqual([i['id'] for i in self.imagens], [ident, ident])
+
+    def test_docker_no_ensaio_so_lista(self):
+        self.imagem('avilaops-app:531217e', mb=450)
+        r = self.etapa(limpeza_disco.etapa_docker, simula=True, agora=self.depois)
+        self.assertEqual((r['feito'], r['estimado_mb'], r['itens'][0]['imagem']), (False, 450, 'avilaops-app:531217e'))
+        self.assertEqual(len(self.imagens), 1)
+        self.assertFalse(any('rmi' in c for c in self.comandos))
+
+    def test_docker_com_build_ou_save_rodando_pula(self):
+        self.imagem('avilaops-app:531217e')
+        self.processo(30, ['docker', 'save', 'avilaops-app:531217e'])
+        r = self.etapa(limpeza_disco.etapa_docker, agora=self.depois)
+        self.assertIn('pulado: docker em uso', r['detalhe'])
+        self.assertEqual(self.comandos, [])
+
+    def test_docker_sem_saber_dos_conteineres_nao_apaga(self):
+        self.imagem('avilaops-app:531217e')
+        for falha in ('docker', 'docker ps', 'docker inspect', 'docker image'):
+            self.falha = {falha}
+            self.conteineres = {'c1': 'sha256:' + 'f' * 64}
+            r = self.etapa(limpeza_disco.etapa_docker, agora=self.depois)
+            self.assertIn('pulado', r['detalhe'], falha)
+        self.assertFalse(any('rmi' in c for c in self.comandos))
+
+    def test_docker_conteiner_criado_depois_da_lista_segura(self):
+        ident = self.imagem('avilaops-app:531217e')
+        de_verdade, chamadas = limpeza_disco.imagens_com_conteiner, []
+
+        def com_conteiner(prazo):
+            chamadas.append(1)
+            if len(chamadas) == 2:  # alguém deu `docker run` entre a lista e o rmi
+                self.conteineres['c9'] = ident
+            return de_verdade(prazo)
+
+        with mock.patch.object(limpeza_disco, 'imagens_com_conteiner', com_conteiner):
+            r = self.etapa(limpeza_disco.etapa_docker, agora=self.depois)
+        self.assertEqual(self.motivos(r), {'avilaops-app:531217e': 'contêiner novo desde a avaliação'})
+        self.assertFalse(any('rmi' in c for c in self.comandos))
+
+    def test_docker_so_aceita_leitura_e_rmi_de_nome_com_tag(self):
+        for args in (['volume', 'rm', 'pgdata'], ['volume', 'prune', '-f'], ['system', 'prune', '-af'],
+                     ['image', 'prune', '-a'], ['rm', '-f', 'c1'], ['rmi', '-f', 'app:1'], ['rmi', 'app:1', 'app:2'],
+                     ['rmi', 'sha256:' + 'a' * 64], ['rmi', 'postgres:18-alpine'], ['rmi', 'semtag'], ['compose', 'down', '-v']):
+            codigo, saida = limpeza_disco.docker(args, lambda: 30)
+            self.assertIsNone(codigo, args)
+            self.assertIn('recusado', saida)
+        self.assertEqual(self.comandos, [])
+
+    # --- (b) .next
+
+    def test_next_sai_de_repo_limpo_e_o_resto_fica(self):
+        repo = self.repo('loja')
+        (repo / 'apps/web/.next').mkdir(parents=True)
+        (repo / 'apps/web/package.json').write_text('{}')
+        r = self.etapa(limpeza_disco.etapa_next)
+        self.assertFalse((repo / '.next').exists() or (repo / 'apps/web/.next').exists())
+        for fica in ('node_modules/pacote/index.js', 'src/pagina.tsx', '.git/HEAD', 'apps/web/package.json'):
+            self.assertTrue((repo / fica).exists(), fica)
+        self.assertEqual([i['pasta'] for i in r['itens']], [str(repo / '.next'), str(repo / 'apps/web/.next')])
+        self.assertNotIn('erro', r)
+
+    def test_next_no_ensaio_so_lista_e_estima(self):
+        repo = self.repo('loja')
+        (repo / '.next/grande').write_bytes(b'x' * 3 * limpeza_disco.MB)
+        r = self.etapa(limpeza_disco.etapa_next, simula=True)
+        self.assertTrue((repo / '.next/grande').exists())
+        self.assertEqual((r['feito'], r['estimado_mb'], r['itens']), (False, 3, [{'pasta': str(repo / '.next'), 'mb': 3}]))
+        self.assertIn('apagaria 1 .next', r['detalhe'])
+
+    def test_next_de_repo_com_arvore_suja_fica(self):
+        repo = self.repo('loja', status=' M src/pagina.tsx\n?? rascunho.md')
+        r = self.etapa(limpeza_disco.etapa_next)
+        self.assertTrue((repo / '.next/server/pagina.js').exists())
+        self.assertEqual(self.motivos(r), {'.next': 'árvore git suja (2 arquivo(s))'})
+
+    def test_next_com_processo_no_repo_fica(self):
+        casos = {'cwd': dict(args=['node', 'server.js'], cwd='{repo}/apps'),
+                 'raiz': dict(args=['bash'], cwd='{repo}'),
+                 'aberto': dict(args=['node', 'x'], aberto='{repo}/.next/trace'),
+                 'linha': dict(args=['node', '{repo}/node_modules/.bin/next', 'start']),
+                 'shell': dict(args=['bash', '-c', 'cd {repo}; npm run build'])}
+        for pid, (nome, caso) in enumerate(casos.items(), 40):
+            repo = self.repo(nome)
+            (repo / 'apps').mkdir()
+            self.processo(pid, [a.format(repo=repo) for a in caso['args']],
+                          **{k: v.format(repo=repo) for k, v in caso.items() if k != 'args'})
+        vizinho = self.repo('cwd-outro')  # nome parecido não confunde: é outro repositório
+        r = self.etapa(limpeza_disco.etapa_next)
+        for nome in casos:
+            self.assertTrue((self.projetos / nome / '.next/server/pagina.js').exists(), nome)
+        self.assertFalse((vizinho / '.next').exists())
+        self.assertEqual(len(r['mantidos']), 5)
+        self.assertTrue(all(m['motivo'].startswith('processo no repositório') for m in r['mantidos']))
+
+    def test_next_processo_que_chega_depois_da_avaliacao_segura(self):
+        repo = self.repo('loja')
+        de_verdade, chamadas = limpeza_disco.trava_do_repo, []
+
+        def trava(caminho, prazo):
+            chamadas.append(1)
+            if len(chamadas) == 2:  # entre a medida e o apagar alguém entrou no repositório
+                self.processo(77, ['npm', 'run', 'build'], cwd=repo)
+            return de_verdade(caminho, prazo)
+
+        with mock.patch.object(limpeza_disco, 'trava_do_repo', trava):
+            r = self.etapa(limpeza_disco.etapa_next)
+        self.assertTrue((repo / '.next/server/pagina.js').exists())
+        self.assertIn('processo no repositório', r['mantidos'][0]['motivo'])
+
+    def test_next_versionada_nao_ignorada_ou_sem_package_json_fica(self):
+        a = self.repo('versionada', versionado='.next/server/pagina.js')
+        b = self.repo('nao-ignorada', ignorado=False)
+        c = self.repo('sem-package')
+        (c / 'package.json').unlink()
+        d = self.repo('sem-git')
+        del self.repos[str(d)]  # o git não responde por ele
+        r = self.etapa(limpeza_disco.etapa_next)
+        for repo in (a, b, c, d):
+            self.assertTrue((repo / '.next/server/pagina.js').exists(), repo.name)
+        self.assertEqual(r['itens'], [])
+        self.assertEqual(sorted(m['motivo'][:22] for m in r['mantidos']),
+                         ['git status não respond', 'não é ignorada pelo gi', 'sem package.json ao la',
+                          'tem arquivo versionado'])
+
+    def test_next_com_arquivo_guardado_ou_por_link_fica(self):
+        guardado = self.repo('guardado')
+        (guardado / '.next/server/config.js.antes-t276').write_text('x')
+        fora = Path(self.tmp.name) / 'fora/.next'
+        fora.mkdir(parents=True)
+        (fora / 'a.js').write_text('x')
+        ligado = self.repo('ligado')
+        limpeza_disco.shutil.rmtree(ligado / '.next')
+        os.symlink(fora, ligado / '.next')
+        os.symlink(self.repo('alvo'), self.projetos / 'atalho')  # repositório alcançado por link não conta duas vezes
+        aninhado = self.repo('pai')
+        limpeza_disco.shutil.rmtree(aninhado / '.next')
+        for arquivo in ('outro/.git/HEAD', 'outro/package.json', 'outro/.next/a.js', '.work/openclaw/x/.next/a.js'):
+            (aninhado / arquivo).parent.mkdir(parents=True, exist_ok=True)
+            (aninhado / arquivo).write_text('x')
+        r = self.etapa(limpeza_disco.etapa_next)
+        self.assertIn('config.js.antes-t276 guardado', self.motivos(r)['.next'])
+        self.assertTrue((guardado / '.next/server/pagina.js').exists())
+        self.assertTrue((fora / 'a.js').exists() and (ligado / '.next').is_symlink())
+        self.assertTrue((aninhado / 'outro/.next/a.js').exists() and (aninhado / '.work/openclaw/x/.next/a.js').exists())
+        self.assertEqual([i['pasta'] for i in r['itens']], [str(self.projetos / 'alvo/.next')])
+
+    # --- (f) node_modules
+
+    def test_node_modules_nao_roda_ate_80_por_cento(self):
+        repo = self.repo('loja')
+        r = self.etapa(limpeza_disco.etapa_node_modules)
+        self.assertEqual(r, {'feito': False, 'detalhe': 'pulado: disco em 80.0%, não passa de 80%'})
+        self.assertTrue((repo / 'node_modules/pacote/index.js').exists())
+        self.assertEqual(self.comandos, [])  # nem consulta o quadro
+
+    def test_node_modules_sai_acima_de_80_com_todas_as_travas(self):
+        self.cheio()
+        repo = self.repo('loja')
+        self.quadro = 'infra ampliar o limpeza_disco.py\nlojas.avilaops.com corrigir o carrinho do cliente\n'
+        r = self.etapa(limpeza_disco.etapa_node_modules)
+        self.assertFalse((repo / 'node_modules').exists())
+        for fica in ('.next/server/pagina.js', 'package-lock.json', 'src/pagina.tsx'):
+            self.assertTrue((repo / fica).exists(), fica)
+        self.assertEqual([i['pasta'] for i in r['itens']], [str(repo / 'node_modules')])
+        self.assertTrue(r['feito'])
+
+    def test_node_modules_no_ensaio_so_lista(self):
+        self.cheio()
+        repo = self.repo('loja')
+        r = self.etapa(limpeza_disco.etapa_node_modules, simula=True)
+        self.assertTrue((repo / 'node_modules/pacote/index.js').exists())
+        self.assertEqual((r['feito'], [i['pasta'] for i in r['itens']]), (False, [str(repo / 'node_modules')]))
+
+    def test_node_modules_com_tarefa_em_andamento_para_o_repo_fica(self):
+        self.cheio()
+        pela_coluna, pelo_pedido = self.repo('Mello'), self.repo('erp')
+        outro = self.repo('loja')
+        self.quadro = 'Mello ajustar o painel\n interpretar o log e corrigir o build em ~/projetos/ERP.\nloja2 outra coisa\n'
+        r = self.etapa(limpeza_disco.etapa_node_modules)
+        self.assertTrue((pela_coluna / 'node_modules').exists() and (pelo_pedido / 'node_modules').exists())
+        self.assertFalse((outro / 'node_modules').exists())  # "loja2" e "interpretar" não são "loja" nem "erp"
+        self.assertEqual(set(self.motivos(r).values()), {'tarefa em_andamento no quadro para o repositório'})
+        self.assertEqual(len(r['mantidos']), 2)
+
+    def test_node_modules_sem_resposta_do_quadro_nao_roda(self):
+        self.cheio()
+        repo = self.repo('loja')
+        self.falha = {'psql'}
+        r = self.etapa(limpeza_disco.etapa_node_modules)
+        self.assertIn('pulado: o quadro não respondeu', r['detalhe'])
+        self.assertTrue((repo / 'node_modules').exists())
+
+    def test_node_modules_seguro_por_cada_trava(self):
+        self.cheio()
+        self.repo('suja', status='?? novo.ts')
+        self.processo(50, ['node', 'servidor.js'], cwd=self.repo('com-processo'))
+        self.repo('commit-novo', commit=self.tarde - 3 * self.HORAS)
+        (self.repo('sem-lock') / 'package-lock.json').unlink()
+        self.repo('versionado', versionado='node_modules/pacote/index.js')
+        self.arquivo(self.repo('instalado-agora') / 'node_modules/novo/index.js', horas=2)
+        r = self.etapa(limpeza_disco.etapa_node_modules)
+        self.assertEqual(r['itens'], [])
+        self.assertEqual({nome: motivo[:19] for nome, motivo in (
+            (Path(m['pasta']).parent.name, m['motivo']) for m in r['mantidos'])},
+            {'suja': 'árvore git suja (1 ', 'com-processo': 'processo no reposit', 'commit-novo': 'commit há 3.0 h (mí',
+             'sem-lock': 'sem lockfile: a rei', 'versionado': 'tem arquivo version', 'instalado-agora': 'mexido há 2.0 h (mí'})
+        for nome in ('suja', 'com-processo', 'commit-novo', 'sem-lock', 'versionado', 'instalado-agora'):
+            self.assertTrue((self.projetos / nome / 'node_modules/pacote/index.js').exists(), nome)
+
+    def test_node_modules_de_subpasta_usa_o_lockfile_da_raiz(self):
+        self.cheio()
+        repo = self.repo('mono')
+        for arquivo in ('webmail/package.json', 'webmail/node_modules/p/index.js'):
+            (repo / arquivo).parent.mkdir(parents=True, exist_ok=True)
+            (repo / arquivo).write_text('x')
+        r = self.etapa(limpeza_disco.etapa_node_modules)
+        self.assertEqual(len(r['itens']), 2)
+        self.assertFalse((repo / 'webmail/node_modules').exists())
+        self.assertTrue((repo / 'webmail/package.json').exists())
+
+    def test_rodada_inteira_no_ensaio_soma_o_que_liberaria_e_nao_apaga(self):
+        self.cheio()
+        repo = self.repo('loja')
+        (repo / '.next/grande').write_bytes(b'x' * 2 * limpeza_disco.MB)
+        self.imagem('avilaops-app:531217e', mb=450)
+        with mock.patch.object(limpeza_disco.time, 'time', lambda: self.tarde):
+            r = limpeza_disco.limpa(simula=True)
+        self.assertEqual(r['etapas']['docker_imagens']['estimado_mb'], 450)
+        self.assertEqual(r['etapas']['next']['estimado_mb'], 2)
+        self.assertEqual(r['estimado_mb'], sum(e.get('estimado_mb') or 0 for e in r['etapas'].values()))
+        self.assertGreaterEqual(r['estimado_mb'], 452)
+        self.assertTrue((repo / '.next/grande').exists() and (repo / 'node_modules').exists())
+        self.assertEqual(len(self.imagens), 1)
+        self.assertNotIn('itens', limpeza_disco.resumo(r)['etapas']['next'])  # a linha do vigia segue curta
+
+    # --- (c) ~/.npm/_npx
+
+    def test_npx_sem_processo_e_sem_leitura_ha_12_h_sai(self):
+        parada, viva = self.npx / 'aaaa', self.npx / 'bbbb'
+        for entrada in (parada, viva, self.npx / 'cccc'):
+            self.arquivo(entrada / 'node_modules/.bin/servidor', horas=40)
+        self.arquivo(self.npx / 'cccc/node_modules/pacote/index.js', horas=40, lido=3)  # lida há 3 h
+        self.processo(60, ['node', str(viva / 'node_modules/.bin/servidor'), '--stdio'])
+        r = self.etapa(limpeza_disco.etapa_npx, agora=self.tarde - 30 * self.HORAS)
+        self.assertEqual(r['itens'], [])  # só 10 h depois da última mexida: ainda não
+        r = self.etapa(limpeza_disco.etapa_npx)
+        self.assertFalse(parada.exists())
+        self.assertTrue((viva / 'node_modules/.bin/servidor').exists() and (self.npx / 'cccc').exists())
+        self.assertEqual([i['pasta'] for i in r['itens']], [str(parada)])
+        self.assertEqual({nome: motivo[:22] for nome, motivo in self.motivos(r).items()},
+                         {'bbbb': 'em uso por processo (/', 'cccc': 'lido ou mexido há 3.0 '})
+
+    def test_npx_baixando_pula_a_etapa(self):
+        self.arquivo(self.npx / 'aaaa/node_modules/x/index.js', horas=40)
+        self.processo(61, ['npx', 'pacote'])  # sem filho: ainda está gravando em _npx
+        r = self.etapa(limpeza_disco.etapa_npx)
+        self.assertIn('pulado: npm rodando', r['detalhe'])
+        self.assertTrue((self.npx / 'aaaa').exists())
+
+    def test_npx_no_ensaio_so_lista(self):
+        self.arquivo(self.npx / 'aaaa/node_modules/x/index.js', horas=40)
+        r = self.etapa(limpeza_disco.etapa_npx, simula=True)
+        self.assertEqual([i['pasta'] for i in r['itens']], [str(self.npx / 'aaaa')])
+        self.assertTrue((self.npx / 'aaaa/node_modules/x/index.js').exists())
+
+    # --- (d) logs do claude-cli e node-compile-cache
+
+    def test_logs_do_claude_com_mais_de_um_dia_saem(self):
+        velho = self.arquivo(self.logs / '-home-u-projetos/mcp-logs-github/2026-10-07.jsonl', horas=30)
+        novo = self.arquivo(self.logs / '-home-u-projetos/mcp-logs-github/2026-10-09.jsonl', horas=5)
+        aberto = self.arquivo(self.logs / '-home-u/mcp-logs-openclaw/sessao.jsonl', horas=30)
+        outro = self.arquivo(self.logs / '-home-u/cache-de-outra-coisa/dado.json', horas=30)
+        guardado = self.arquivo(self.logs / '-home-u/mcp-logs-openclaw/a.jsonl.antes-t223', horas=30)
+        self.processo(70, ['claude'], aberto=aberto)
+        ensaio = self.etapa(limpeza_disco.etapa_claude_logs, simula=True)
+        self.assertTrue(velho.exists())
+        self.assertEqual((ensaio['feito'], sum(i['arquivos'] for i in ensaio['itens'])), (False, 1))
+        r = self.etapa(limpeza_disco.etapa_claude_logs)
+        self.assertFalse(velho.exists())
+        for fica in (novo, aberto, outro, guardado, velho.parent):
+            self.assertTrue(fica.exists(), fica)
+        self.assertEqual(r['itens'], [{'pasta': str(self.logs / '-home-u-projetos'), 'arquivos': 1, 'mb': 0.0}])
+        self.assertIn('1 aberto(s) por processo ficaram', r['detalhe'])
+        self.assertTrue(r['feito'])
+
+    def test_compile_cache_nao_lido_ha_um_dia_sai(self):
+        velho = self.arquivo(self.cache_node / 'v24-x64-1000/aaa', horas=30)
+        lido = self.arquivo(self.cache_node / 'v24-x64-1000/bbb', horas=30, lido=2)
+        os.symlink(velho, self.cache_node / 'atalho')
+        r = self.etapa(limpeza_disco.etapa_compile_cache)
+        self.assertFalse(velho.exists())
+        self.assertTrue(lido.exists() and (self.cache_node / 'atalho').is_symlink())
+        self.assertEqual(sum(i['arquivos'] for i in r['itens']), 1)
+        with mock.patch.object(limpeza_disco, 'COMPILE_CACHE', Path(self.tmp.name).parent / 'fora-do-tmp'):
+            self.assertIn('nada apagado', self.etapa(limpeza_disco.etapa_compile_cache)['erro'])
+
+    # --- (e) store do pnpm
+
+    def test_store_do_pnpm_so_perde_arquivo_com_um_link(self):
+        orfao = self.arquivo(self.store / 'v11/files/ab/orfao', horas=30)
+        usado = self.arquivo(self.store / 'v11/files/cd/usado', horas=30)
+        indice = self.arquivo(self.store / 'v11/index/ab.json', horas=30)
+        em_projeto = self.projetos / 'loja/node_modules/p/index.js'
+        em_projeto.parent.mkdir(parents=True)
+        os.link(usado, em_projeto)
+        agora_mesmo = self.depois - 7 * self.HORAS + 60  # o ctime dos arquivos é de um minuto atrás
+        self.assertEqual(self.etapa(limpeza_disco.etapa_pnpm, agora=agora_mesmo)['itens'], [])
+        self.assertTrue(orfao.exists())
+        self.assertEqual(self.etapa(limpeza_disco.etapa_pnpm, simula=True)['estimado_mb'], 0)
+        self.assertTrue(orfao.exists())
+        r = self.etapa(limpeza_disco.etapa_pnpm)
+        self.assertFalse(orfao.exists())
+        self.assertTrue(usado.exists() and em_projeto.exists() and indice.exists())
+        self.assertEqual(r['itens'], [{'pasta': str(self.store / 'v11/files/ab'), 'arquivos': 1, 'mb': 0.0}])
+
+    def test_store_do_pnpm_com_instalacao_rodando_pula(self):
+        orfao = self.arquivo(self.store / 'v11/files/ab/orfao', horas=30)
+        self.processo(62, ['node', '/x/corepack/pnpm.cjs', 'install'])
+        r = self.etapa(limpeza_disco.etapa_pnpm)
+        self.assertIn('pulado: gerenciador de pacotes rodando', r['detalhe'])
+        self.assertTrue(orfao.exists())
+
+    # --- caminhos proibidos
+
+    def test_caminho_proibido_e_recusado_mesmo_passado_por_engano(self):
+        raiz = Path(self.tmp.name)
+        proibida = raiz / '.openclaw'
+        repo = proibida / 'workspace'
+        with mock.patch.object(limpeza_disco, 'PROJETOS', proibida), mock.patch.object(limpeza_disco, 'NPX', proibida / 'npx'), \
+                mock.patch.object(limpeza_disco, 'CLAUDE_LOGS', raiz / 'backups'), \
+                mock.patch.object(limpeza_disco, 'PNPM_STORE', raiz / '.agents/store'):
+            self.projetos, self.npx, self.logs, self.store = proibida, proibida / 'npx', raiz / 'backups', raiz / '.agents/store'
+            repo = self.repo('workspace')
+            self.cheio()
+            entrada = self.arquivo(self.npx / 'aaaa/x', horas=40)
+            dump = self.arquivo(self.logs / 'mcp-logs-x/gapp.dump', horas=40)
+            do_store = self.arquivo(self.store / 'v11/files/ab/x', horas=40)
+            resultados = [self.etapa(e) for e in (
+                limpeza_disco.etapa_next, limpeza_disco.etapa_node_modules, limpeza_disco.etapa_npx,
+                limpeza_disco.etapa_claude_logs, limpeza_disco.etapa_pnpm)]
+        for fica in (repo / '.next/server/pagina.js', repo / 'node_modules/pacote/index.js', entrada, dump, do_store):
+            self.assertTrue(fica.exists(), fica)
+        self.assertFalse(any(r['feito'] for r in resultados))
+        for r in resultados[:3]:
+            self.assertTrue(all(m['motivo'].startswith('caminho proibido') for m in r['mantidos']) and r['mantidos'])
+        for r in resultados[3:]:
+            self.assertIn('caminho proibido', r['erro'])
+
+    def test_recusa_barra_proibido_guardado_link_e_fora_da_raiz(self):
+        raiz = Path(self.tmp.name)
+        boa = self.arquivo(self.npx / 'aaaa/x').parent
+        self.assertIsNone(limpeza_disco.recusa(boa, self.npx))
+        self.assertIn('fora de', limpeza_disco.recusa(self.npx, self.npx))            # a própria raiz nunca sai
+        self.assertIn('fora de', limpeza_disco.recusa(boa, self.projetos))
+        self.assertIn('caminho proibido', limpeza_disco.recusa(raiz, raiz.parent))   # contém pasta proibida
+        self.assertIn('caminho proibido', limpeza_disco.recusa(raiz / 'docker/volumes/pgdata', raiz))
+        self.assertIn('guardado', limpeza_disco.recusa(self.arquivo(self.npx / 'Caddyfile.antes-t12/x').parent, self.npx))
+        os.symlink(raiz / 'postgresql', self.npx / 'banco')
+        self.assertIn('caminho proibido', limpeza_disco.recusa(self.npx / 'banco', self.npx))
+        os.symlink(boa, self.npx / 'atalho')
+        self.assertIn('link simbólico', limpeza_disco.recusa(self.npx / 'atalho', self.npx))
+        self.assertIn('link simbólico', limpeza_disco.recusa(self.npx / 'atalho/x', self.npx))
+        with mock.patch.object(limpeza_disco.os, 'getuid', return_value=os.getuid() + 1):
+            self.assertEqual(limpeza_disco.recusa(boa, self.npx), 'de outro usuário')
+
+    def test_proibidos_e_comandos_de_producao(self):
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.stopall()  # desfaz as trocas do setUp: valem as constantes do código
+        casa = Path.home()
+        self.assertEqual(set(limpeza_disco.PROIBIDOS), {'/opt/backups', '/var/lib/docker', '/var/lib/postgresql',
+                                                        str(casa / '.openclaw'), str(casa / '.agents')})
+        for caminho, raiz in (('/opt/backups/diario/gapp.dump', '/opt'), ('/var/lib/docker/volumes/pg/_data', '/var/lib'),
+                              ('/var/lib/postgresql/18/main', '/var'), (casa / '.openclaw/tmp/x', casa),
+                              (casa / '.agents/claude/scratch', casa), (casa, '/home'), ('/opt', '/'),
+                              (casa / 'projetos/infra/Caddyfile.antes-t276', casa / 'projetos')):
+            self.assertIsNotNone(limpeza_disco.recusa(caminho, raiz), caminho)
+        self.assertEqual(limpeza_disco.DOCKER_MANTER, ('postgres:18-alpine',))
+        self.assertEqual(limpeza_disco.DOCKER_PERMITIDO, (('images',), ('ps',), ('inspect',), ('image', 'inspect'), ('rmi',)))
+        self.assertEqual((limpeza_disco.NODE_MODULES_PCT, limpeza_disco.NODE_MODULES_HORAS, limpeza_disco.NPX_HORAS,
+                          limpeza_disco.LOGS_HORAS), (80, 24, 12, 24))
+        self.assertEqual([n for n, _ in limpeza_disco.ETAPAS][-1], 'node_modules')  # a única cara de refazer fica por último
 
 
 class PublicaRotinas(unittest.TestCase):

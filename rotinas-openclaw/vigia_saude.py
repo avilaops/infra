@@ -13,7 +13,9 @@ com o `/` acima de 75%.
 
 Atenção: sem `--sem-banco` é a rodada de verdade, igual à do job, mesmo à mão: grava a
 medida, abre e encerra tarefa no quadro e a limpeza APAGA (cache do npm, builds do CMake
-em /tmp, apt). Para só olhar, use sempre `--sem-banco`.
+em /tmp, apt, imagens Docker sem contêiner, logs do claude-cli, node-compile-cache, _npx
+parado, sobras do store do pnpm, .next e, acima de 80%, node_modules de repositório
+parado). Para só olhar, use sempre `--sem-banco`.
 
 Uso: vigia_saude.py [--sem-banco]
 """

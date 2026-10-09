@@ -183,6 +183,13 @@ medidas antigas de `saude_medidas.disco_pct` estão na conta antiga.
 | `npm_cache` | `npm cache clean --force` (só `~/.npm/_cacache`; `_npx` fica) | há processo `npm`/`npx`/`pnpm`/`yarn` rodando; cache limpo há menos de 6 h (`LIMPEZA_NPM_INTERVALO_H`); sem `npm` no PATH |
 | `tmp_cmake` | apaga em `/tmp` os diretórios que têm `CMakeCache.txt` e `CMakeFiles/`, parados há mais de 6 h (`LIMPEZA_TMP_HORAS`; conta o arquivo mais novo da árvore) | processo com pasta de trabalho, executável, arquivo aberto ou mapeado ali; pasta de outro usuário; pasta com `CMakeLists.txt`, `.git` ou `package.json` (build dentro do código); sem `CMakeFiles/`; `CMakeCache.txt` sem `CMAKE_HOME_DIRECTORY`, com caminho relativo ou com a fonte dentro da pasta; `CMakeLists.txt` em qualquer nível, fora de `_deps/` e `CMakeFiles/`; arquivo `.md`, `.txt`, `.patch`, `.diff`, `.c`, `.cc`, `.cpp`, `.cxx`, `.py` ou `.sh` solto na raiz do build (fora `CMakeCache.txt` e `install_manifest*.txt`); outro disco montado dentro; pasta trocada por outra depois de avaliada |
 | `apt` | `sudo -n apt-get clean` | sem pacote em `/var/cache/apt/archives`; sem sudo sem senha para o comando (pula sem erro) |
+| `docker_imagens` | `docker rmi <nome:tag>` (sem `-f`) de cada imagem com tag e sem contêiner | algum cliente `docker`/`docker-compose`/`docker-buildx` rodando (build, `save`, `load`, `run`); imagem com contêiner, mesmo parado; `postgres:18-alpine` e qualquer outro nome da mesma imagem; imagem sem tag; criada há menos de 2 h (`LIMPEZA_DOCKER_HORAS`); `docker images`, `ps` ou `inspect` sem resposta; contêiner criado entre a lista e o `rmi` |
+| `claude_logs` | apaga os arquivos de `~/.cache/claude-cli-nodejs/*/mcp-logs*/` parados há mais de 1 dia (`LIMPEZA_LOGS_HORAS`); as pastas ficam | arquivo aberto por processo; fora de pasta `mcp-logs*`; de outro usuário; link simbólico |
+| `node_compile_cache` | apaga os arquivos de `/tmp/node-compile-cache` não lidos nem gravados há mais de 1 dia (`LIMPEZA_LOGS_HORAS`) | arquivo aberto ou mapeado por processo; de outro usuário (os do root ficam) |
+| `npx` | apaga entradas inteiras de `~/.npm/_npx` sem leitura nem gravação há mais de 12 h (`LIMPEZA_NPX_HORAS`) | `npm`/`npx` baixando (mesma regra do `npm_cache`); processo com a entrada na linha de comando (caso dos servidores MCP), como pasta de trabalho, executável ou arquivo aberto; conferido de novo na hora de apagar |
+| `pnpm_store` | apaga de `~/.local/share/pnpm/store/v*/files` os arquivos com um só link (nenhum `node_modules` aponta para eles) há mais de 1 h (`LIMPEZA_PNPM_HORAS`) | `pnpm`/`npm`/`yarn` rodando; arquivo com mais de um link; aberto por processo; o índice do store não é tocado |
+| `next` | apaga o `.next` dos repositórios de `~/projetos` (até 3 níveis abaixo da raiz) | árvore git suja (`git status --porcelain`, com os não versionados) ou git sem resposta; processo com pasta de trabalho, executável, arquivo aberto ou linha de comando dentro do repositório; sem `package.json` ao lado; `.next` não ignorado pelo git ou com arquivo versionado dentro; link simbólico; arquivo `*.antes-t*` dentro; conferido de novo na hora de apagar |
+| `node_modules` | **só com o `/` acima de 80%** (`LIMPEZA_NODE_MODULES_PCT`, medido na hora da etapa): apaga o `node_modules` dos repositórios de `~/projetos` | tudo o que segura o `next`, e mais: tarefa `em_andamento` no quadro com o nome do repositório na coluna `repo` ou no pedido; quadro sem resposta (a etapa inteira não roda); último commit de qualquer ramo, local ou remoto, há menos de 24 h (`LIMPEZA_NODE_MODULES_HORAS`); arquivo do `node_modules` mexido há menos de 24 h; sem lockfile ao lado nem na raiz do repositório |
 
 - `npm exec`/`npx` que já subiu o programa (tem processo filho, caso dos servidores MCP
   das sessões, vivos por dias) não conta como npm rodando; sem filho, ainda está baixando
@@ -196,9 +203,25 @@ medidas antigas de `saude_medidas.disco_pct` estão na conta antiga.
   do build e só as extensões da tabela: arquivo de outro tipo, ou em subpasta, sai junto.
   Remendo feito em `_deps/<lib>-src/` (código que o CMake baixou) também sai: leve-o para
   o projeto.
-- Nada além disso é tocado: backup, dump, banco, volume do docker, `~/projetos`,
-  `~/.openclaw`, `~/.agents` e `node_modules` de projeto ficam fora por construção.
-- As três etapas dividem 60 s (`LIMPEZA_ORCAMENTO_S`; o job do vigia tem 90 s). O que não
+- Nada além disso é tocado. Tudo o que as etapas `claude_logs` a `node_modules` apagam
+  passa por `recusa()`, que barra `/opt/backups`, `/var/lib/docker` (volumes),
+  `/var/lib/postgresql`, `~/.openclaw`, `~/.agents`, qualquer pasta que contenha uma
+  dessas, arquivo ou pasta `*.antes-t*`, link simbólico, o que é de outro usuário e o que
+  fica fora da pasta da etapa, mesmo que o caminho chegue lá por engano. O docker só
+  recebe `images`, `ps`, `inspect`, `image inspect` e `rmi <nome:tag>`: volume, contêiner,
+  `prune` e `-f` são recusados no próprio código. Em repositório só saem `.next` e
+  `node_modules`; código, `.git` e `.work/` ficam.
+- O `node_modules` é a única etapa cara de refazer (`npm ci`) e por isso é a última, só
+  roda acima de 80% e mede o disco de novo na hora: se as etapas anteriores já baixaram o
+  uso, ela não roda. Depois dela, `npm ci` (ou `corepack pnpm install`) refaz a pasta.
+- O `.next` sai mesmo de repositório com commit recente: quem precisar roda `npm run build`.
+- A leitura (`atime`) usada no `npx` e no `node-compile-cache` vem do disco montado com
+  `relatime`: o sistema só a atualiza uma vez por dia. No `npx` (12 h) uma entrada pode
+  parecer parada tendo sido lida depois; a trava que vale ali é a do processo. O que sair
+  volta sozinho no próximo `npx`.
+- Pasta segurada por uma trava barata aparece em `mantidos` com 0 MB: só se mede o que
+  passou por todas elas. Imagem Docker conta o tamanho inteiro, mesmo dividindo camadas.
+- As dez etapas dividem 60 s (`LIMPEZA_ORCAMENTO_S`; o job do vigia tem 90 s). O que não
   couber fica para a rodada seguinte: a procura em `/tmp`, a avaliação de cada build e a
   leitura de `/proc` param quando o tempo acaba, e sem saber quem usa a pasta nada é
   apagado. Só o apagar de uma pasta já começado não é interrompido.
@@ -206,13 +229,14 @@ medidas antigas de `saude_medidas.disco_pct` estão na conta antiga.
   falhar com `ENOENT`; rodar de novo resolve, nada se perde.
 - Cada rodada que apagou algo ou falhou grava uma linha em
   `~/.local/state/rotinas-openclaw/limpeza-disco.log` (`LIMPEZA_ESTADO`; últimas 500):
-  livre antes e depois, liberado por etapa e as pastas apagadas. O resumo sai sempre no
+  livre antes e depois, liberado por etapa e o que foi apagado e mantido. O resumo sai sempre no
   campo `limpeza` da linha do vigia (`openclaw cron runs f5f8d4fd-5ba9-4bfc-adb0-7afea58df761`).
 - `LIMPEZA_DISCO` no job do vigia: `1` apaga (padrão), `simula` só lista, `0` desliga.
   `vigia_saude.py --sem-banco` sempre simula. **Sem `--sem-banco`, o vigia rodado à mão
   faz o mesmo que o job: grava no banco e apaga de verdade.**
-- À mão, `limpeza_disco.py` só simula; apagar exige `--executa`. `--limiar PCT` troca o
-  limiar da rodada.
+- À mão, `limpeza_disco.py` só simula (ensaio): lista em `itens` o que apagaria, em
+  `mantidos` o que ficou e por quê, e soma em `estimado_mb` quanto a rodada de verdade
+  liberaria. Apagar exige `--executa`. `--limiar PCT` troca o limiar da rodada.
 
 ## Ciclo de roadmap
 
