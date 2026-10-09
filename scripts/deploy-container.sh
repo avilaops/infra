@@ -83,7 +83,7 @@ dump_if_pending() {
 # Opt-in por app via MIGRATE_ENV_FILE no .conf; app sem essa variavel pula.
 run_migrations() (
   # Subshell: a limpeza continua ativa em qualquer erro, sem trocar o trap do dispatcher.
-  local base=$1 migrate_env var_name schema_dir major migrate_dir db_url='' cid=''
+  local base=$1 migrate_env var_name schema_dir major migrate_dir db_url='' cid='' repeated=0
   [[ -n "${MIGRATE_ENV_FILE:-}" ]] || return 0
   migrate_env="$base/${MIGRATE_ENV_FILE}"
   [[ -f "$migrate_env" ]] || fail 'Arquivo de ambiente da migracao nao encontrado.'
@@ -106,6 +106,13 @@ run_migrations() (
   cd "$migrate_dir"
   # So para conferir o nome do banco antes do dump; quem usa a URL e o Prisma, pelo .env.
   if [[ -n "${MIGRATE_DUMP_DB:-}" ]]; then
+    # Com a variavel repetida no .env o Prisma fica com a ULTIMA linha, e o dotenv
+    # dele tambem aceita "export", espacos em volta e ":" no lugar de "="
+    # (conferido com prisma@5 e prisma@6 de verdade, tarefa 262). Ler a primeira
+    # conferiria um banco e migraria outro. Em vez de adivinhar qual linha vale,
+    # para: quem arruma e o .env, que deve ter a variavel uma vez so.
+    repeated=$(grep -cE "^[[:space:]]*(export[[:space:]]+)?${var_name}[[:space:]]*[=:]" .env) || true
+    (( ${repeated:-0} <= 1 )) || fail 'Variavel de banco repetida no ambiente da migracao; nada foi migrado nem trocado.'
     db_url=$(grep -m1 -E "^(export[[:space:]]+)?${var_name}=" .env | cut -d= -f2-) || db_url=''
     db_url=${db_url%$'\r'}
     db_url=${db_url%\"}; db_url=${db_url#\"}; db_url=${db_url%\'}; db_url=${db_url#\'}
@@ -147,7 +154,10 @@ preflight() (
         compose_preflight+=(-f "$RUNTIME_OVERLAY")
       fi
       "${compose_preflight[@]}" config --quiet
-      "${compose_preflight[@]}" config --services | grep -Fxq -- "$SERVICE" || fail 'Servico ausente no Compose.'
+      # Lista inteira antes de procurar: com "| grep -q" e pipefail, o grep sai no
+      # primeiro acerto e o compose, se ainda estiver escrevendo, morre de SIGPIPE.
+      services=$("${compose_preflight[@]}" config --services)
+      grep -Fxq -- "$SERVICE" <<< "$services" || fail 'Servico ausente no Compose.'
       previous=$(docker inspect --format '{{.Image}}' "$CONTAINER")
       [[ "$previous" =~ ^sha256:[a-f0-9]{64}$ ]] || fail 'Container atual nao encontrado.'
       ;;

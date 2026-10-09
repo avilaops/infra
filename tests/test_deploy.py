@@ -172,6 +172,70 @@ printf 'CREATE TABLE t (id int);\\n'
         self.assertFalse((self.root / 'npx.log').exists())
         self.assertFalse((self.root / 'runuser.log').exists())
 
+    def test_variavel_de_banco_repetida_com_dump_ligado_para(self):
+        # Ressalva 3 da revisao da 247: o Prisma fica com a ultima linha da variavel
+        # e o script lia a primeira. Aqui a primeira confere com MIGRATE_DUMP_DB e a
+        # ultima nao: tem de parar antes do status, do dump e da migracao.
+        boa = 'DATABASE_URL=postgresql://teste:senha-a@127.0.0.1:5432/teste'
+        outra = 'postgresql://teste:senha-b@127.0.0.1:5432/outro_banco'
+        segundas = ['DATABASE_URL=' + outra, 'export DATABASE_URL=' + outra, '  DATABASE_URL = ' + outra,
+                    'DATABASE_URL: ' + outra, 'DATABASE_URL="' + outra + '"', boa]
+        self.stub('npx', '#!/bin/bash\necho chamado >> "$TEST_ROOT/npx.log"\n')
+        for segunda in segundas:
+            for ordem in ((boa, segunda), (segunda, boa)):
+                with self.subTest(linhas=ordem):
+                    self.envfile.write_text('OUTRA=1\n' + ordem[0] + '\nMAIS=2\n' + ordem[1] + '\n')
+                    result = self.com_dump(PENDENTE='1')
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('Variavel de banco repetida', result.stderr)
+                    self.assertNotIn('senha-', result.stderr + result.stdout)
+                    self.assertFalse((self.root / 'npx.log').exists())
+                    self.assertFalse((self.root / 'runuser.log').exists())
+                    self.assertEqual(self.arquivos_de_dump(), [])
+                    self.assertEqual(list(self.work.iterdir()), [])
+
+    def test_linha_comentada_ou_de_outra_variavel_nao_conta_como_repetida(self):
+        self.envfile.write_text('# DATABASE_URL=postgresql://u:s@127.0.0.1:5432/antigo\n'
+                                '#DATABASE_URL=postgresql://u:s@127.0.0.1:5432/antigo\n'
+                                'SHADOW_DATABASE_URL=postgresql://u:s@127.0.0.1:5432/sombra\n'
+                                'DATABASE_URL_LEITURA=postgresql://u:s@127.0.0.1:5432/leitura\n'
+                                'DATABASE_URL=postgresql://teste:teste@host.docker.internal:5432/teste\n')
+        self.stub('npx', '''#!/bin/bash
+[ "${4:-}" = status ] && { echo status >> "$TEST_ROOT/npx.log"; exit 1; }
+echo executada > "$TEST_ROOT/migracao.log"
+''')
+        result = self.com_dump(PENDENTE='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('dump conferido', result.stderr)
+        self.assertTrue((self.root / 'migracao.log').exists())
+
+    def test_variavel_repetida_sem_dump_nao_muda_nada(self):
+        # Sem MIGRATE_DUMP_DB o script nao le a URL: quem decide e o Prisma, como antes.
+        self.envfile.write_text('DB_HOST=host.docker.internal\nDATABASE_URL=x\n'
+                                'DATABASE_URL="postgresql://teste:teste@${DB_HOST}:5432/teste"\n')
+        result = self.migrate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / 'migracao.log').read_text().strip(), 'executada')
+
+    def test_servico_achado_mesmo_com_compose_ainda_escrevendo(self):
+        # "config --services | grep -q" com pipefail: o grep saia no primeiro acerto
+        # e o compose levava SIGPIPE ao escrever o servico seguinte.
+        (self.root / 'compose.yml').write_text('services: {}\n')
+        self.stub('docker', '''#!/bin/bash
+case "$*" in
+ *"config --services") echo app; sleep 0.3; echo worker ;;
+ "inspect "*) echo sha256:$(printf 'a%.0s' {1..64}) ;;
+esac
+''')
+        comando = ('set -euo pipefail; DEPLOY_MODE=container; PROJECT_DIR="$TEST_ROOT"; COMPOSE_FILE="$TEST_ROOT/compose.yml"; '
+                   'COMPOSE_PROJECT=teste; CONTAINER=app; HEALTH_URL=http://localhost; ')
+        result = self.run_bash(comando + 'SERVICE=app; preflight; echo passou')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('passou', result.stdout)
+        result = self.run_bash(comando + 'SERVICE=ausente; preflight; echo passou')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Servico ausente no Compose.', result.stderr)
+
     def test_nome_do_banco_extraido_da_url(self):
         # (URL, banco esperado; '' = nao da para ler e o deploy para)
         casos = [
