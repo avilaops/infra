@@ -3,9 +3,10 @@
 # avilaops/mcp-fiscal-brasil. Segue a Norma de Plataforma: todo nome sai de
 # `fiscal.avilaops.com` e nenhuma porta e publicada no host.
 #
-# O dominio serve o servidor MCP por HTTP (streamable): o endereco para os
-# clientes e https://fiscal.avilaops.com/mcp. O Caddy do host encaminha para
-# 172.31.0.16:8000.
+# Um processo so (mcp-fiscal-api) serve tudo: a pagina do software em "/", a
+# API REST em "/v1" (documentacao em "/docs") e o servidor MCP por HTTP
+# (streamable) em https://fiscal.avilaops.com/mcp. O Caddy do host encaminha
+# para 172.31.0.16:8000.
 #
 # Nao usa banco, volume nem segredo: so consulta fontes publicas. Sem .env.
 name: fiscal-avilaops-com
@@ -17,8 +18,9 @@ services:
     image: ghcr.io/avilaops/mcp-fiscal-brasil:latest
     container_name: fiscal-avilaops-com-web
     restart: unless-stopped
-    # O padrao da imagem e stdio, que nao abre porta.
-    command: ["mcp-fiscal-brasil", "--transport", "http", "--host", "0.0.0.0", "--port", "8000"]
+    # O padrao da imagem e stdio, que nao abre porta. HOST e PORT ja vem da
+    # imagem (0.0.0.0:8000).
+    command: ["mcp-fiscal-api"]
     environment:
       MCP_FISCAL_ENV: production
       MCP_FISCAL_LOG_LEVEL: INFO

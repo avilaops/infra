@@ -145,7 +145,7 @@ próprio no `Caddyfile`, n8n nativo da seção 4) e o registro A resolve para
 | `erp.avilaops.com` | `127.0.0.1:3140` (contêiner `erp`; não é mais Odoo) |
 | `crm.avilaops.com` | `172.31.0.13:3000` (rede `edge`, contêiner `crm-avilaops-com-web`) |
 | `tms.avilaops.com` | `172.31.0.11:3000` (rede `edge`, contêiner `tms-avilaops-com-web`) |
-| `fiscal.avilaops.com` | `172.31.0.16:8000` (rede `edge`, contêiner `fiscal-avilaops-com-web`); MCP Fiscal Brasil, clientes em `/mcp`, sem autenticação |
+| `fiscal.avilaops.com` | `172.31.0.16:8000` (rede `edge`, contêiner `fiscal-avilaops-com-web`); MCP Fiscal Brasil: página em `/`, API REST em `/v1`, clientes MCP em `/mcp`, sem autenticação |
 | `cms.avilaops.com` e `*.sites.avilaops.com` | `172.31.0.17:3090` (rede `edge`, contêiner `cms-avilaops-com-web`, `/opt/cms-avilaops-com`); CMS em Rust, banco `cms_avilaops_com` no Postgres do host, imagens no volume `cms-avilaops-com_midia`. No ar só por dentro desde 10/10/2026: **sem DNS e sem bloco no Caddy** até os registros `cms` e `*.sites` existirem. Migração é manual (`servidor migrar`): o `avila-deploy` ainda não tem modo sem Prisma |
 | `n8n.avilaops.com` | `127.0.0.1:5678` (n8n nativo); `/avila/*`, `/avila-api/*` e os arquivos `avila-modules.*` em `127.0.0.1:5679` (`avila-n8n-modules`); estáticos do editor em `/opt/n8n/override` |
 | `ludus.avilaops.com` | estático `/var/www/ludus.avilaops.com` |
@@ -350,7 +350,7 @@ rodando e 2 parados.
 | `minas-espetinhos-app-1` | por id (`ghcr.io/avilaops/app.comandeiro.com.br@sha256:bfe4aede…`) | `127.0.0.1:3040` |
 | `evolution-avilaops-com-web` | `evoapicloud/evolution-api:v2.3.7` | rede `edge` `172.31.0.14:8080`, sem domínio e sem bloco no Caddy |
 | `whatsapp-avilaops-com-web` | `ghcr.io/avilaops/whatsapp.avilaops.com:sha-37c1e59…` desde 09/10/2026 16:05 UTC (build no `apps-noclient`) | rede `edge` `172.31.0.15:8080`, sem domínio e sem bloco no Caddy; a tela de conexão chega ao navegador pelo n8n (abaixo) |
-| `fiscal-avilaops-com-web` | `ghcr.io/avilaops/mcp-fiscal-brasil:sha-70d70b5…` desde 10/10/2026 01:55 UTC (build no `apps-noclient`) | rede `edge` `172.31.0.16:8000`; bloco `fiscal.avilaops.com` no Caddy; registro A na Cloudflare (DNS only) criado em 10/10/2026 |
+| `fiscal-avilaops-com-web` | `ghcr.io/avilaops/mcp-fiscal-brasil:sha-edab2ce…` desde 10/10/2026 02:10 UTC (build no `apps-noclient`) | rede `edge` `172.31.0.16:8000`; bloco `fiscal.avilaops.com` no Caddy; registro A na Cloudflare (DNS only) criado em 10/10/2026 |
 
 "Por id" é imagem fixada por digest pelo deploy (o `docker ps` mostra só o id).
 Os três contêineres `cifra-*` foram recriados em 06/10/2026 (tarefa 146) e os

@@ -160,9 +160,10 @@ Parear de novo: `POST /parear` (ver o README do serviço).
 ## `fiscal-avilaops-com/`
 
 Compose do MCP Fiscal Brasil (código em `avilaops/mcp-fiscal-brasil`, fork do `DeHor-Labs`),
-instalado em `/opt/fiscal-avilaops-com`. O domínio `fiscal.avilaops.com` serve o servidor MCP por
-HTTP: o endereço para os clientes é `https://fiscal.avilaops.com/mcp`, e `GET /health` responde
-`{"status":"ok"}`. O Caddy do host encaminha para `172.31.0.16:8000`.
+instalado em `/opt/fiscal-avilaops-com`. Um processo só (`mcp-fiscal-api`) serve a página do
+software em `/`, a API REST em `/v1` (documentação em `/docs`) e o servidor MCP por HTTP em
+`https://fiscal.avilaops.com/mcp`; `GET /health` responde `"status":"ok"`. O MCP dentro da API
+é mudança do fork (`api.py`, commit `edab2ce`). O Caddy do host encaminha para `172.31.0.16:8000`.
 
 Publica-se como os outros containers (`BUILD-MANUAL.md`, repositório `mcp-fiscal-brasil`, destino
 em `deploy/production/fiscal.avilaops.com.conf`). A primeira subida, em 10/10/2026, foi à mão,
