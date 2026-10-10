@@ -350,7 +350,7 @@ rodando e 2 parados.
 | `cifra-cifra-calculadora-1` | por id (`40410e0001ed`) | `127.0.0.1:3011` |
 | `minas-espetinhos-app-1` | por id (`ghcr.io/avilaops/app.comandeiro.com.br@sha256:bfe4aede…`) | `127.0.0.1:3040` |
 | `evolution-avilaops-com-web` | `evoapicloud/evolution-api:v2.3.7` | rede `edge` `172.31.0.14:8080`, sem domínio e sem bloco no Caddy |
-| `whatsapp-avilaops-com-web` | `ghcr.io/avilaops/whatsapp.avilaops.com:sha-37c1e59…` desde 09/10/2026 16:05 UTC (build no `apps-noclient`) | rede `edge` `172.31.0.15:8080`, sem domínio e sem bloco no Caddy; a tela de conexão chega ao navegador pelo n8n (abaixo) |
+| `whatsapp-avilaops-com-web` | `ghcr.io/avilaops/whatsapp.avilaops.com:sha-466b61a…` desde 10/10/2026 06:05 UTC (build no `apps-noclient`) | rede `edge` `172.31.0.15:8080`, sem domínio e sem bloco no Caddy; a tela de conexão chega ao navegador pelo n8n (abaixo) |
 | `fiscal-avilaops-com-web` | `ghcr.io/avilaops/mcp-fiscal-brasil:sha-edab2ce…` desde 10/10/2026 02:10 UTC (build no `apps-noclient`) | rede `edge` `172.31.0.16:8000`; bloco `fiscal.avilaops.com` no Caddy; registro A na Cloudflare (DNS only) criado em 10/10/2026 |
 | `mcp-avilaops-com-web` | `ghcr.io/avilaops/mcp.avilaops.com:sha-d37c355…` desde 10/10/2026 04:36 UTC (build no `apps-noclient`) | rede `edge` `172.31.0.18:8080`; bloco `mcp.avilaops.com` no Caddy; volume `mcp-avilaops-com-dados` (SQLite com clientes e tokens em hash) |
 
@@ -388,6 +388,11 @@ Atualização de 09/10/2026 (tarde), WhatsApp pelo n8n:
   mudança de `.env`: `docker compose -f docker-compose.yml -f
   /var/lib/avilaops/deploy/whatsapp.avilaops.com/image.yml up -d` (sem o segundo
   arquivo o compose tenta baixar `:latest` e o GHCR recusa).
+- Desde 10/10/2026 06:05 UTC o serviço publica **Status do WhatsApp** (`POST /enviar`,
+  destino `status`, com `publico` obrigatório): mídia preparada uma vez e entrega em
+  lotes sequenciais (`STATUS_LOTE`, padrão 50). No n8n o público é a tabela
+  `whatsapp_status_publico`; o agendador ganhou o canal `status` e o formulário, a opção
+  "Status do WhatsApp". Testado só com dois números próprios.
 - O workflow "WhatsApp Status - Agendador" passou a conferir a conexão e a enviar
   pelo `whatsapp-avilaops-com-web`. **O `evolution-avilaops-com-web` não é mais
   chamado por nenhum workflow** e está sem número pareado; continua no ar, com o
