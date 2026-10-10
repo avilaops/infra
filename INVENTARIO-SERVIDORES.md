@@ -146,6 +146,7 @@ próprio no `Caddyfile`, n8n nativo da seção 4) e o registro A resolve para
 | `crm.avilaops.com` | `172.31.0.13:3000` (rede `edge`, contêiner `crm-avilaops-com-web`) |
 | `tms.avilaops.com` | `172.31.0.11:3000` (rede `edge`, contêiner `tms-avilaops-com-web`) |
 | `fiscal.avilaops.com` | `172.31.0.16:8000` (rede `edge`, contêiner `fiscal-avilaops-com-web`); MCP Fiscal Brasil, clientes em `/mcp`, sem autenticação |
+| `cms.avilaops.com` e `*.sites.avilaops.com` | `172.31.0.17:3090` (rede `edge`, contêiner `cms-avilaops-com-web`, `/opt/cms-avilaops-com`); CMS em Rust, banco `cms_avilaops_com` no Postgres do host, imagens no volume `cms-avilaops-com_midia`. No ar só por dentro desde 10/10/2026: **sem DNS e sem bloco no Caddy** até os registros `cms` e `*.sites` existirem. Migração é manual (`servidor migrar`): o `avila-deploy` ainda não tem modo sem Prisma |
 | `n8n.avilaops.com` | `127.0.0.1:5678` (n8n nativo); `/avila/*`, `/avila-api/*` e os arquivos `avila-modules.*` em `127.0.0.1:5679` (`avila-n8n-modules`); estáticos do editor em `/opt/n8n/override` |
 | `ludus.avilaops.com` | estático `/var/www/ludus.avilaops.com` |
 | `jobs.avilaops.com` | estático `/var/www/jobs.avilaops.com` |
@@ -416,7 +417,7 @@ Atualização de 09/10/2026 (tarde), WhatsApp pelo n8n:
 ### Redes Docker
 
 `edge` (`172.31.0.0/24`; IPs fixos em 09/10/2026: `.10` auth, `.11` tms, `.12`
-mello, `.13` crm, `.14` evolution, `.15` whatsapp), `app-avilaops_default`, `cifra_default`,
+mello, `.13` crm, `.14` evolution, `.15` whatsapp, `.16` fiscal, `.17` cms), `app-avilaops_default`, `cifra_default`,
 `minas-espetinhos_default`,
 `despolarizamed_default`, `saudepet_default` e as
 padrão `bridge`, `host`, `none`. `erp`, `lojas-avilaops` e `node_exporter` estão
