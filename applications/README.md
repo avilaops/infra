@@ -172,3 +172,19 @@ pelo mesmo motivo do `whatsapp-avilaops-com`.
 Sem banco, sem volume e sem `.env`: só consulta fontes públicas. **O endereço é público e não
 pede autenticação.** As ferramentas que dependem de certificado A1 (status da SEFAZ,
 distribuição e manifestação de NF-e) respondem erro, porque nenhum certificado foi configurado.
+
+## `mcp-avilaops-com/`
+
+Compose do endereço único dos servidores MCP (código em `avilaops/mcp.avilaops.com`), instalado
+em `/opt/mcp-avilaops-com`. O serviço faz o login dos conectores (OAuth 2.1, com a identidade
+vinda do `auth.avilaops.com`, aplicação e cliente OIDC `mcp`) e repassa cada pedido ao servidor
+MCP de verdade: `/infisical` e `/gsc` são workflows do n8n, `/fiscal` é o
+`fiscal-avilaops-com-web`. O Caddy do host encaminha para `172.31.0.18:8080`.
+
+Publica-se como os outros containers (`BUILD-MANUAL.md`, destino em
+`deploy/production/mcp.avilaops.com.conf`). A primeira subida, em 10/10/2026, foi à mão.
+
+O `.env` (600) guarda o segredo do cliente OIDC, o token que cada workflow do n8n pede e o
+SHA-256 dos tokens de serviço aceitos. O estado fica no volume `mcp-avilaops-com-dados`
+(SQLite, só hashes); perder o volume só obriga todo mundo a fazer login de novo. Prova de ponta
+a ponta: `/root/.credenciais/e2e_mcp.sh` no `applications`.

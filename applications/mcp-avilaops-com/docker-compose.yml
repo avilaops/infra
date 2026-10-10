@@ -1,0 +1,55 @@
+# Endereco unico dos servidores MCP da Avila Ops, em /opt/mcp-avilaops-com no
+# servidor applications. Codigo em avilaops/mcp.avilaops.com. Segue a Norma de
+# Plataforma: todo nome sai de `mcp.avilaops.com` e nenhuma porta e publicada
+# no host.
+#
+# Faz o login (OAuth 2.1, pelo auth.avilaops.com) e repassa cada pedido ao
+# servidor MCP de verdade: /infisical e /gsc sao workflows do n8n, /fiscal e o
+# container fiscal-avilaops-com-web. O Caddy do host encaminha para
+# 172.31.0.18:8080.
+#
+# Sem banco no Postgres: o estado (clientes registrados e tokens, so em hash)
+# fica num SQLite no volume. Perder o volume so obriga todo mundo a fazer
+# login de novo.
+name: mcp-avilaops-com
+
+services:
+  web:
+    # O deploy troca esta linha pela imagem do commit
+    # (/var/lib/avilaops/deploy/mcp.avilaops.com/image.yml).
+    image: ghcr.io/avilaops/mcp.avilaops.com:latest
+    container_name: mcp-avilaops-com-web
+    restart: unless-stopped
+    env_file: [.env]
+    # O Node roda como PID 1; sem isto o SIGTERM do deploy demora 10 s.
+    init: true
+    expose: ["8080"]
+    networks:
+      edge:
+        # IP fixo: o Caddy roda no host e nao resolve nome de container.
+        ipv4_address: 172.31.0.18
+    volumes:
+      - dados:/dados
+    # Em repouso o processo usa perto de 60 MB. O teto protege os vizinhos.
+    mem_limit: 256m
+    memswap_limit: 256m
+    labels:
+      avilaops.domain: mcp.avilaops.com
+      avilaops.stack: mcp
+      avilaops.tier: web
+      avilaops.backup: "false"
+      avilaops.owner: nicolas
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health',{signal:AbortSignal.timeout(4000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  dados:
+    name: mcp-avilaops-com-dados
+
+networks:
+  edge:
+    external: true
