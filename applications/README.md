@@ -156,3 +156,18 @@ arquivos. Dali em diante o deploy normal funciona.
 
 Sem banco: o único estado é a sessão do WhatsApp, no volume `whatsapp-avilaops-com-sessao`.
 Parear de novo: `POST /parear` (ver o README do serviço).
+
+## `fiscal-avilaops-com/`
+
+Compose do MCP Fiscal Brasil (código em `avilaops/mcp-fiscal-brasil`, fork do `DeHor-Labs`),
+instalado em `/opt/fiscal-avilaops-com`. O domínio `fiscal.avilaops.com` serve o servidor MCP por
+HTTP: o endereço para os clientes é `https://fiscal.avilaops.com/mcp`, e `GET /health` responde
+`{"status":"ok"}`. O Caddy do host encaminha para `172.31.0.16:8000`.
+
+Publica-se como os outros containers (`BUILD-MANUAL.md`, repositório `mcp-fiscal-brasil`, destino
+em `deploy/production/fiscal.avilaops.com.conf`). A primeira subida, em 10/10/2026, foi à mão,
+pelo mesmo motivo do `whatsapp-avilaops-com`.
+
+Sem banco, sem volume e sem `.env`: só consulta fontes públicas. **O endereço é público e não
+pede autenticação.** As ferramentas que dependem de certificado A1 (status da SEFAZ,
+distribuição e manifestação de NF-e) respondem erro, porque nenhum certificado foi configurado.

@@ -145,6 +145,7 @@ próprio no `Caddyfile`, n8n nativo da seção 4) e o registro A resolve para
 | `erp.avilaops.com` | `127.0.0.1:3140` (contêiner `erp`; não é mais Odoo) |
 | `crm.avilaops.com` | `172.31.0.13:3000` (rede `edge`, contêiner `crm-avilaops-com-web`) |
 | `tms.avilaops.com` | `172.31.0.11:3000` (rede `edge`, contêiner `tms-avilaops-com-web`) |
+| `fiscal.avilaops.com` | `172.31.0.16:8000` (rede `edge`, contêiner `fiscal-avilaops-com-web`); MCP Fiscal Brasil, clientes em `/mcp`, sem autenticação |
 | `n8n.avilaops.com` | `127.0.0.1:5678` (n8n nativo); `/avila/*`, `/avila-api/*` e os arquivos `avila-modules.*` em `127.0.0.1:5679` (`avila-n8n-modules`); estáticos do editor em `/opt/n8n/override` |
 | `ludus.avilaops.com` | estático `/var/www/ludus.avilaops.com` |
 | `jobs.avilaops.com` | estático `/var/www/jobs.avilaops.com` |
@@ -348,6 +349,7 @@ rodando e 2 parados.
 | `minas-espetinhos-app-1` | por id (`ghcr.io/avilaops/app.comandeiro.com.br@sha256:bfe4aede…`) | `127.0.0.1:3040` |
 | `evolution-avilaops-com-web` | `evoapicloud/evolution-api:v2.3.7` | rede `edge` `172.31.0.14:8080`, sem domínio e sem bloco no Caddy |
 | `whatsapp-avilaops-com-web` | `ghcr.io/avilaops/whatsapp.avilaops.com:sha-37c1e59…` desde 09/10/2026 16:05 UTC (build no `apps-noclient`) | rede `edge` `172.31.0.15:8080`, sem domínio e sem bloco no Caddy; a tela de conexão chega ao navegador pelo n8n (abaixo) |
+| `fiscal-avilaops-com-web` | `ghcr.io/avilaops/mcp-fiscal-brasil:sha-70d70b5…` desde 10/10/2026 01:55 UTC (build no `apps-noclient`) | rede `edge` `172.31.0.16:8000`; bloco `fiscal.avilaops.com` no Caddy; registro A na Cloudflare (DNS only) criado em 10/10/2026 |
 
 "Por id" é imagem fixada por digest pelo deploy (o `docker ps` mostra só o id).
 Os três contêineres `cifra-*` foram recriados em 06/10/2026 (tarefa 146) e os
@@ -761,6 +763,7 @@ links.
 | `mellotransportesriopreto-com-br` | 8 KB |
 | `evolution-avilaops-com` | 16 KB em 09/10/2026 (`docker-compose.yml`, `.env`, `.env.example`) |
 | `whatsapp-avilaops-com` | 16 KB em 09/10/2026 (`docker-compose.yml`, `.env`, `.env.example`) |
+| `fiscal-avilaops-com` | 8 KB em 10/10/2026 (`docker-compose.yml`; sem `.env`) |
 | `avila-webmail` | link para `/opt/.releases/webmail.avilaops.com/<versão>` |
 | `avila-mail` | link para `/opt/.releases/mail.avilaops.com/<versão>` |
 

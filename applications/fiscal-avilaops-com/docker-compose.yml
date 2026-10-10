@@ -1,0 +1,51 @@
+# MCP Fiscal Brasil (consultas fiscais: CNPJ, CEP, NF-e, SPED, Simples) em
+# /opt/fiscal-avilaops-com no servidor applications. Codigo em
+# avilaops/mcp-fiscal-brasil. Segue a Norma de Plataforma: todo nome sai de
+# `fiscal.avilaops.com` e nenhuma porta e publicada no host.
+#
+# O dominio serve o servidor MCP por HTTP (streamable): o endereco para os
+# clientes e https://fiscal.avilaops.com/mcp. O Caddy do host encaminha para
+# 172.31.0.16:8000.
+#
+# Nao usa banco, volume nem segredo: so consulta fontes publicas. Sem .env.
+name: fiscal-avilaops-com
+
+services:
+  web:
+    # O deploy troca esta linha pela imagem do commit
+    # (/var/lib/avilaops/deploy/fiscal.avilaops.com/image.yml).
+    image: ghcr.io/avilaops/mcp-fiscal-brasil:latest
+    container_name: fiscal-avilaops-com-web
+    restart: unless-stopped
+    # O padrao da imagem e stdio, que nao abre porta.
+    command: ["mcp-fiscal-brasil", "--transport", "http", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      MCP_FISCAL_ENV: production
+      MCP_FISCAL_LOG_LEVEL: INFO
+    # O Python roda como PID 1; sem isto o SIGTERM do deploy demora 10 s.
+    init: true
+    expose: ["8000"]
+    networks:
+      edge:
+        # IP fixo: o Caddy roda no host e nao resolve nome de container.
+        ipv4_address: 172.31.0.16
+    # O teto protege os vizinhos, que tem pouca memoria livre.
+    mem_limit: 384m
+    memswap_limit: 384m
+    labels:
+      avilaops.domain: fiscal.avilaops.com
+      avilaops.stack: fiscal
+      avilaops.tier: web
+      avilaops.backup: "false"
+      avilaops.owner: nicolas
+    healthcheck:
+      # Script da propria imagem: GET /health na porta 8000.
+      test: ["CMD", "python", "docker_healthcheck.py"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 20s
+
+networks:
+  edge:
+    external: true
