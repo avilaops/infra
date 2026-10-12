@@ -1,0 +1,59 @@
+# Infisical (cofre de segredos) da Avila Ops, em /opt/infisical no servidor
+# apps-noclient. E o provedor do modulo External secrets do n8n.avilaops.com.
+#
+# Sem dominio publico: so responde em 127.0.0.1 e no IP da WireGuard
+# (10.10.0.4). O servico dos modulos, no applications (10.10.0.2), chega por la.
+#
+# Banco: Postgres do host (banco e papel `infisical`), em 172.17.0.1. A rede
+# fica dentro de 172.16.0.0/12 porque o UFW so libera a 5432 para essa faixa.
+# Segredos de instalacao em /opt/infisical/.env (600, fora do Git). Perder a
+# ENCRYPTION_KEY torna ilegivel tudo o que esta guardado.
+name: infisical
+
+services:
+  web:
+    image: infisical/infisical:v0.166.3
+    container_name: infisical-web
+    restart: unless-stopped
+    env_file: [.env]
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8085:8080"
+      - "10.10.0.4:8085:8080"
+    networks: [infisical]
+    # A partida passa de 1 GB por alguns segundos. Sem direito a swap o contêiner
+    # era morto no próprio teto e entrava em laço de reinício (09/10/2026); com
+    # o swap do host ele transborda para disco em vez de cair.
+    mem_limit: 1g
+    memswap_limit: 2500m
+    labels:
+      avilaops.stack: infisical
+      avilaops.tier: web
+      avilaops.owner: nicolas
+
+  redis:
+    image: redis:7-alpine
+    container_name: infisical-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "96mb", "--maxmemory-policy", "noeviction"]
+    networks: [infisical]
+    mem_limit: 128m
+    memswap_limit: 128m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    labels:
+      avilaops.stack: infisical
+      avilaops.tier: cache
+      avilaops.owner: nicolas
+
+networks:
+  infisical:
+    name: infisical
+    ipam:
+      config:
+        - subnet: 172.30.60.0/24

@@ -7,6 +7,7 @@ Este repositório é a fonte central da infraestrutura da Avila Ops. Cada área 
 deploy/production/       destinos autorizados no servidor de aplicações
 monitoring/              stack de observabilidade do servidor dedicado
 producao-agents/         coletores instalados no servidor de aplicações
+apps-noclient/           scripts e serviços instalados no servidor de build (backup, Infisical)
 levantamento/            inventário somente leitura dos servidores
 scripts/                 publicação, rollback e verificações
 docs/                    documentação operacional futura
