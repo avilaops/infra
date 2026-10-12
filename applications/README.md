@@ -159,6 +159,12 @@ Parear de novo: `POST /parear` (ver o README do serviço).
 
 ## `fiscal-avilaops-com/`
 
+**Sem endereço público desde 12/10/2026:** o `fiscal.avilaops.com` (Caddy e DNS) foi removido a
+pedido do Nicolas. O serviço atende só na rede `edge` (`http://172.31.0.16:8000`) e é usado pelo MCP
+único da empresa (nó `fiscal` do workflow `MCP - Avila Ops` no n8n). TMS e ERP chegam a ele por
+`https://mcp.avilaops.com/mcp`, com token de serviço que só abre as ferramentas `fiscal_*`. O que
+vem abaixo descreve a instalação; onde disser `https://fiscal.avilaops.com`, leia o endereço interno.
+
 Compose do MCP Fiscal Brasil (código em `avilaops/mcp-fiscal-brasil`, fork do `DeHor-Labs`),
 instalado em `/opt/fiscal-avilaops-com`. Um processo só (`mcp-fiscal-api`) serve a página do
 software em `/`, a API REST em `/v1` (documentação em `/docs`) e o servidor MCP por HTTP em

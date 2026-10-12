@@ -5,8 +5,9 @@
 #
 # Um processo so (mcp-fiscal-api) serve tudo: a pagina do software em "/", a
 # API REST em "/v1" (documentacao em "/docs") e o servidor MCP por HTTP
-# (streamable) em https://fiscal.avilaops.com/mcp. O Caddy do host encaminha
-# para 172.31.0.16:8000.
+# (streamable) em /mcp. Sem endereco publico desde 12/10/2026: atende so na
+# rede edge (172.31.0.16:8000) e quem o usa passa pelo MCP unico da empresa
+# (mcp.avilaops.com/mcp, ferramentas fiscal_*).
 #
 # Nao usa banco, volume nem segredo: so consulta fontes publicas. Sem .env.
 name: fiscal-avilaops-com
