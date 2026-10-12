@@ -137,7 +137,7 @@ próprio no `Caddyfile`, n8n nativo da seção 4) e o registro A resolve para
 
 | Domínio | Destino |
 | --- | --- |
-| `avilaops.com` | CMS (`172.31.0.17:3090`, site `avilaops`) desde 12/10/2026; o que o CMS responde 404 sai do estático `/var/www/avilaops.com` (páginas não migradas, `/editorial`, `/_next`, logo). `/guias/ia*` e 28 guias antigos vão direto ao estático. Volta: `Caddyfile.bak-20261012-antes-virada-avilaops-cms` |
+| `avilaops.com` | CMS (`172.31.0.17:3090`, site `avilaops`) desde 12/10/2026; o que o CMS responde 404 sai do estático `/var/www/avilaops.com` (páginas não migradas, `/editorial`, `/_next`, logo). `/guias/ia*` vai direto ao estático (os 28 guias antigos foram para o blog do CMS em 12/10/2026). Volta: `Caddyfile.bak-20261012-antes-virada-avilaops-cms` |
 | `www.avilaops.com` | redireciona (301) para `avilaops.com` |
 | `app.avilaops.com` | `127.0.0.1:3004` |
 | `app.avila.inc` | `127.0.0.1:3004` |
