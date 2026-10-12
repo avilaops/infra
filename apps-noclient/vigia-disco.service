@@ -1,0 +1,12 @@
+[Unit]
+Description=Vigia do disco: limpa o que se refaz sozinho e avisa quando nao basta
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vigia-disco
+User=root
+Nice=10
+StandardOutput=append:/var/log/vigia-disco.log
+StandardError=append:/var/log/vigia-disco.log

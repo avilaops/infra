@@ -1,0 +1,11 @@
+[Unit]
+Description=Confere o disco a cada 15 minutos
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=1min
+Unit=vigia-disco.service
+
+[Install]
+WantedBy=timers.target

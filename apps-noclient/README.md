@@ -60,3 +60,42 @@ rclone lsl r2:avilaops-backups/apps-noclient/db --include '*infisical*'
 
 O teste não cobre subir um Infisical novo a partir da cópia (banco restaurado mais `.env`) e
 ler um segredo por ele.
+
+## Vigia do disco
+
+O servidor hospeda produção e é a máquina de build das sessões, em 38 GB. Em
+10/10/2026 o disco chegou a 100% num deploy e o Redis do notas recusou
+gravações. Desde 12/10/2026 há uma rotina olhando.
+
+| Peça | Onde |
+|---|---|
+| Script | `vigia-disco.sh` → `/usr/local/bin/vigia-disco` |
+| Agendamento | `vigia-disco.service` e `vigia-disco.timer` (a cada 15 minutos) |
+| Configuração | `/etc/vigia-disco.env` (600): `VIGIA_DISCO_WEBHOOK` e os limites |
+| Log | `/var/log/vigia-disco.log` (só escreve quando age) |
+| Aviso | fluxo do n8n "Infra - Aviso de disco" (`fvitbhOh8h8WkGVV`), que manda WhatsApp ao Nicolas |
+
+Como age:
+
+- Abaixo de 80% não faz nada.
+- A partir de 80%, e só sem build rodando, apaga o que se refaz sozinho: cache
+  de build do Docker, imagens sem contêiner, volumes anônimos sem contêiner,
+  cache do npm e pastas de `/opt/build` e `/root/build-*` paradas há mais de 48
+  horas e sem contêiner montando.
+- Se depois disso o disco ainda estiver em 90% ou mais, avisa, no máximo uma
+  vez a cada 6 horas. Quando volta para baixo de 80%, avisa uma vez que
+  normalizou.
+
+Nunca toca em volume com nome, `/opt/backups`, `/opt/<produto>` nem banco.
+Pasta de build nesse servidor é descartável: não deixe nela nada que só exista
+ali.
+
+```bash
+vigia-disco --simula                       # mostra o que faria agora
+VIGIA_DISCO_LIMPA=1 vigia-disco --simula   # simula disco cheio
+systemctl list-timers vigia-disco.timer
+```
+
+O webhook do fluxo não tem senha além do caminho. Por isso o n8n monta o texto
+com campos conferidos (nome de servidor conhecido, números dentro da faixa) e
+descarta o resto.
