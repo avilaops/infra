@@ -99,3 +99,11 @@ systemctl list-timers vigia-disco.timer
 O webhook do fluxo não tem senha além do caminho. Por isso o n8n monta o texto
 com campos conferidos (nome de servidor conhecido, números dentro da faixa) e
 descarta o resto.
+
+## Inventário de capacidades
+
+Desde 16/10/2026 o `/usr/local/bin/inventario-capacidades` manda ao n8n, todo dia às 12:00 UTC,
+as skills e o `.mcp.json` dos projetos em `/opt` (hoje só o `mcp-gsc`; não há agente instalado
+no `root`). Timer `inventario-capacidades.timer`, configuração em `/etc/inventario-capacidades.env`
+e log em `/var/log/inventario-capacidades.log`. Detalhes em
+[`inventario-capacidades/README.md`](../inventario-capacidades/README.md).

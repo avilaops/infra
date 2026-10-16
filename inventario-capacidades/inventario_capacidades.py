@@ -114,6 +114,29 @@ def ler_toml_minimo(texto: str) -> dict:
     return resultado
 
 
+def e_pasta(caminho: Path) -> bool:
+    """is_dir() que trata pasta sem permissão como inexistente (no 3.12 ela levanta erro)."""
+    try:
+        return caminho.is_dir()
+    except OSError:
+        return False
+
+
+def e_arquivo(caminho: Path) -> bool:
+    try:
+        return caminho.is_file()
+    except OSError:
+        return False
+
+
+def subpastas(pasta: Path) -> list[Path]:
+    """Subpastas em ordem alfabética; pasta ilegível conta como vazia."""
+    try:
+        return sorted((p for p in pasta.iterdir() if e_pasta(p)), key=lambda p: p.name.lower())
+    except OSError:
+        return []
+
+
 def resumo_hash(conteudo: bytes | str) -> str:
     if isinstance(conteudo, str):
         conteudo = conteudo.encode("utf-8")
@@ -167,11 +190,9 @@ class Inventario:
     def skills_da_pasta(self, agente: str, pasta: Path, *, escopo: str = "global", prefixo: str = "",
                         situacao: str = "ativo") -> None:
         """Cada subpasta com SKILL.md é uma skill (pastas ocultas são internas do agente)."""
-        if not pasta.is_dir():
-            return
-        for sub in sorted(pasta.iterdir(), key=lambda p: p.name.lower()):
+        for sub in subpastas(pasta):
             arquivo = sub / "SKILL.md"
-            if sub.name.startswith(".") or not arquivo.is_file():
+            if sub.name.startswith(".") or not e_arquivo(arquivo):
                 continue
             self.add(agente, "skill", prefixo + sub.name, escopo=escopo, hash_=hash_de_arquivo(arquivo),
                      origem=sub, situacao=situacao)
@@ -209,11 +230,11 @@ class Inventario:
     def plugin(self, agente: str, nome: str, pasta: Path | None, *, versao=None, ativo: bool = True) -> None:
         """O plugin e o que vem dentro dele: skills, hooks e servidores MCP."""
         situacao = "ativo" if ativo else "desligado"
-        if pasta is None or not pasta.is_dir():
+        if pasta is None or not e_pasta(pasta):
             self.add(agente, "plugin", nome, versao=versao, origem="(pasta ausente)", situacao=situacao)
             return
         manifesto = next((m for m in (pasta / ".claude-plugin" / "plugin.json", pasta / ".codex-plugin" / "plugin.json",
-                                      pasta / ".cursor-plugin" / "plugin.json", pasta / "plugin.json") if m.is_file()), None)
+                                      pasta / ".cursor-plugin" / "plugin.json", pasta / "plugin.json") if e_arquivo(m)), None)
         dados = ler_json(manifesto) if manifesto else None
         if versao is None and isinstance(dados, dict):
             versao = dados.get("version")
@@ -240,15 +261,13 @@ def buscar(raiz: Path, nome_arquivo: str, profundidade: int = 6):
 
 
 def versao_mais_recente(pasta: Path) -> Path | None:
-    if not pasta.is_dir():
-        return None
-    candidatas = [p for p in pasta.iterdir() if p.is_dir() and not p.name.startswith(".")]
+    candidatas = [p for p in subpastas(pasta) if not p.name.startswith(".")]
     return max(candidatas, key=lambda p: p.stat().st_mtime, default=None)
 
 
 def levantar_claude(inv: Inventario) -> None:
     raiz = Path(os.environ.get("CLAUDE_CONFIG_DIR") or HOME / ".claude")
-    if not raiz.is_dir():
+    if not e_pasta(raiz):
         return
     config = ler_json(raiz / "settings.json") or {}
     ligados = config.get("enabledPlugins") or {}
@@ -263,10 +282,10 @@ def levantar_claude(inv: Inventario) -> None:
 
     # Plugins sincronizados da conta claude.ai (cowork). A pasta tem cópias "~gN"
     # de versões anteriores: vale a sem sufixo.
-    for conta in (raiz / "plugins" / "synced").glob("*"):
-        if not conta.is_dir() or conta.name.startswith("."):
+    for conta in subpastas(raiz / "plugins" / "synced"):
+        if conta.name.startswith("."):
             continue
-        for pasta in sorted(conta.iterdir(), key=lambda p: ("~" in p.name, p.name)):
+        for pasta in sorted(subpastas(conta), key=lambda p: ("~" in p.name, p.name)):
             dados = ler_json(pasta / ".claude-plugin" / "plugin.json")
             if pasta.name.startswith(".") or not isinstance(dados, dict) or not dados.get("name"):
                 continue
@@ -280,13 +299,23 @@ def levantar_claude(inv: Inventario) -> None:
 
 def levantar_codex(inv: Inventario) -> None:
     raiz = Path(os.environ.get("CODEX_HOME") or HOME / ".codex")
-    if not raiz.is_dir():
+    if not e_pasta(raiz):
         return
     config = ler_toml(raiz / "config.toml")
+    cache = raiz / "plugins" / "cache"
     for chave, opcoes in (config.get("plugins") or {}).items():
         nome, _, mercado = chave.partition("@")
-        pasta = versao_mais_recente(raiz / "plugins" / "cache" / mercado / nome)
+        pasta = versao_mais_recente(cache / mercado / nome)
         inv.plugin("codex", nome, pasta, ativo=bool((opcoes or {}).get("enabled", True)))
+    # Plugins instalados pela conta ChatGPT (mercados "*-remote") não passam pelo
+    # config.toml: valem as pastas que o Codex baixou.
+    for mercado in subpastas(cache):
+        if not mercado.name.endswith("-remote"):
+            continue
+        for plugin in subpastas(mercado):
+            pasta = versao_mais_recente(plugin)
+            if pasta is not None and not plugin.name.startswith("."):
+                inv.plugin("codex", plugin.name, pasta)
     inv.skills_da_pasta("codex", raiz / "skills")
     inv.hooks_do_arquivo("codex", raiz / "hooks.json", "usuario")
     inv.mcps("codex", config.get("mcp_servers"), None)
@@ -294,13 +323,13 @@ def levantar_codex(inv: Inventario) -> None:
 
 def levantar_cursor(inv: Inventario) -> None:
     raiz = HOME / ".cursor"
-    if not raiz.is_dir():
+    if not e_pasta(raiz):
         return
     inv.skills_da_pasta("cursor", raiz / "skills")
     inv.skills_da_pasta("cursor", raiz / "skills-cursor")
     inv.mcps("cursor", (ler_json(raiz / "mcp.json") or {}).get("mcpServers"), None)
-    for mercado in (raiz / "plugins" / "cache").glob("*"):
-        for plugin in mercado.glob("*") if mercado.is_dir() else []:
+    for mercado in subpastas(raiz / "plugins" / "cache"):
+        for plugin in subpastas(mercado):
             pasta = versao_mais_recente(plugin)
             if pasta is not None:
                 inv.plugin("cursor", plugin.name, pasta)
@@ -313,11 +342,11 @@ def levantar_grok_e_compartilhada(inv: Inventario) -> None:
 
 def levantar_projetos(inv: Inventario, raizes: list[Path]) -> None:
     for raiz in raizes:
-        if not raiz.is_dir():
+        if not e_pasta(raiz):
             diz(f"pasta de projetos não encontrada: {raiz}")
             continue
-        for projeto in sorted(raiz.iterdir(), key=lambda p: p.name.lower()):
-            if not projeto.is_dir() or projeto.name.startswith("."):
+        for projeto in subpastas(raiz):
+            if projeto.name.startswith("."):
                 continue
             escopo = "projeto:" + re.sub(r"[^A-Za-z0-9._-]", "-", projeto.name)[:80]
             for relativo, agente in PASTAS_DE_SKILLS_DO_PROJETO.items():

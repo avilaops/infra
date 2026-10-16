@@ -16,7 +16,7 @@ de tudo o que existe e onde: plugin, skill, hook e servidor MCP, por máquina e 
 | Agente | De onde |
 |---|---|
 | `claude` | plugins instalados e os sincronizados da conta claude.ai, `~/.claude/skills`, hooks do `settings.json`, MCPs do `~/.claude.json` |
-| `codex` | plugins do `config.toml` (com a pasta em `plugins/cache`), `~/.codex/skills`, `hooks.json`, `mcp_servers` |
+| `codex` | plugins do `config.toml` (com a pasta em `plugins/cache`) e os instalados pela conta ChatGPT (`plugins/cache/*-remote`), `~/.codex/skills`, `hooks.json`, `mcp_servers` |
 | `cursor` | `~/.cursor/skills`, `~/.cursor/skills-cursor`, `mcp.json`, plugins em `plugins/cache` |
 | `grok` | `~/.grok/skills` |
 | `agents` | `~/.agents/skills`, a pasta compartilhada que Codex, Cursor e Grok leem |
@@ -55,6 +55,17 @@ n8n, feito para a migração de skills para o n8n. O fluxo não mexe nelas.
 
 O webhook não tem senha além do caminho. Por isso o fluxo só aceita máquina da lista, até
 8.000 itens e campos no formato esperado; o resto é descartado.
+
+## Onde está instalado
+
+Desde 16/10/2026, todas com um envio bem-sucedido na tabela:
+
+| Máquina | Como roda | Usuário | `INVENTARIO_PROJETOS` | Itens no primeiro envio |
+|---|---|---|---|---|
+| `pc-nicolas` | tarefa agendada, 09:00 e logon | `nicol` | `D:\Projetos` | 1.502 |
+| `applications` | timer, 12:00 UTC | `root` | `/home/deploy/projects:/opt` | 261 |
+| `apps-noclient` | timer, 12:00 UTC | `root` | `/opt` | 5 |
+| `creators` (`orchestrator` no SSH do PC) | timer, 12:00 UTC | `avops` | `/opt` | 673 |
 
 ## Instalação
 
@@ -95,6 +106,16 @@ systemctl enable --now inventario-capacidades.timer
 
 Roda todo dia às 12:00 UTC (com até 15 minutos de folga). Log em
 `/var/log/inventario-capacidades.log`.
+
+Quando os agentes moram em outro usuário (no `creators` é o `avops`), o serviço roda com ele:
+
+```bash
+mkdir -p /etc/systemd/system/inventario-capacidades.service.d
+printf '[Service]\nUser=avops\n' > /etc/systemd/system/inventario-capacidades.service.d/usuario.conf
+chown root:avops /etc/inventario-capacidades.env && chmod 640 /etc/inventario-capacidades.env
+touch /var/log/inventario-capacidades.log && chown avops:avops /var/log/inventario-capacidades.log
+systemctl daemon-reload
+```
 
 ## Conferir
 

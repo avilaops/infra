@@ -26,3 +26,13 @@ própria pasta, com o script e, quando chama o Claude Code, as instruções.
 
 - **Regras de redação:** [`planejador-redigir/prompt.md`](planejador-redigir/prompt.md).
   Mudar o tom ou o tamanho de um canal é editar esse arquivo.
+
+## Inventário de capacidades (systemd, não cron)
+
+O `/usr/local/bin/inventario-capacidades` manda ao n8n, todo dia às 12:00 UTC, os plugins,
+skills, hooks e MCPs do Claude Code e da `~/.agents` do `avops`, e as skills dos projetos em
+`/opt`. Roda pelo `inventario-capacidades.timer` do sistema com o usuário `avops`
+(`/etc/systemd/system/inventario-capacidades.service.d/usuario.conf`); a configuração
+`/etc/inventario-capacidades.env` é `root:avops` 640 e o log
+`/var/log/inventario-capacidades.log` é do `avops`. Detalhes em
+[`inventario-capacidades/README.md`](../../inventario-capacidades/README.md).

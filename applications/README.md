@@ -194,3 +194,11 @@ O `.env` (600) guarda o segredo do cliente OIDC, o token que cada workflow do n8
 SHA-256 dos tokens de serviço aceitos. O estado fica no volume `mcp-avilaops-com-dados`
 (SQLite, só hashes); perder o volume só obriga todo mundo a fazer login de novo. Prova de ponta
 a ponta: `/root/.credenciais/e2e_mcp.sh` no `applications`.
+
+## `inventario-capacidades`
+
+Desde 16/10/2026 o `/usr/local/bin/inventario-capacidades` manda ao n8n, todo dia às 12:00 UTC,
+o que o Codex e o Cursor do `root` e as skills dos projetos em `/home/deploy/projects` e `/opt`
+têm instalado (`inventario-capacidades.timer`, configuração em `/etc/inventario-capacidades.env`,
+log em `/var/log/inventario-capacidades.log`). Como funciona e como reinstalar:
+[`inventario-capacidades/README.md`](../inventario-capacidades/README.md).
