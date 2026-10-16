@@ -1,0 +1,12 @@
+[Unit]
+Description=Inventario de capacidades: manda ao n8n os plugins, skills, hooks e MCPs dos agentes desta maquina
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env python3 -I /usr/local/bin/inventario-capacidades
+User=root
+Nice=10
+StandardOutput=append:/var/log/inventario-capacidades.log
+StandardError=append:/var/log/inventario-capacidades.log
