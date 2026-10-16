@@ -9,6 +9,7 @@ monitoring/              stack de observabilidade do servidor dedicado
 producao-agents/         coletores instalados no servidor de aplicações
 apps-noclient/           scripts e serviços instalados no servidor de build (backup, Infisical)
 levantamento/            inventário somente leitura dos servidores
+inventario-capacidades/  inventário diário de plugins, skills, hooks e MCPs dos agentes (PC e servidores) para o n8n
 scripts/                 publicação, rollback e verificações
 docs/                    documentação operacional futura
 ```
