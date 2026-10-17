@@ -111,81 +111,29 @@ O `/usr/local/sbin/avila-deploy` (`scripts/deploy-container.sh`, modo 755, chama
 instalação: 09/10/2026 07:30 UTC (tarefa 262, commit `44624fd`); cópia de volta e comandos em
 `applications/README.md`.
 
-## Build no servidor dos agentes (`creators`): um por vez
+## Builds dos agentes: somente no GitHub Actions
 
-Os dois scripts acima rodam no `apps-noclient` e no `applications`. No `creators`
-(4 GB de RAM, onde rodam os agentes e o gateway do OpenClaw) não há script de
-build deste repositório, mas agentes disparam `npm run build`, testes longos e
-`docker build` à mão. Em 08/10/2026 três deles ao mesmo tempo zeraram a swap e o
-kernel matou o gateway (tarefas 231 e 239). Por isso, **todo build pesado no
-`creators` passa pelo `build-pesado`** (`scripts/build-pesado.sh`):
+O `creators` coordena agentes e não é um executor de CI. Compilação, testes
+pesados, suites E2E e criação de imagens devem executar em runners hospedados
+pelo GitHub. Isso inclui `npm run build`, `pnpm build`, `turbo build`,
+`next build`, `cargo build`, `cargo test` e `docker build`.
 
-```bash
-build-pesado npm run build
-build-pesado docker build --build-arg NODE_OPTIONS=--max-old-space-size=1024 -t <imagem> .
-build-pesado ./deploy/empacotar.sh      # script do produto que faz build por dentro
-```
+O fluxo obrigatório é:
 
-- Trava única em `/var/lock/build-pesado.lock` (`flock`). Quem chega depois avisa
-  quem está com a trava, espera até 30 min e, se ela não soltar, sai com código
-  75 sem executar nada.
-- Acrescenta `--max-old-space-size=1024` ao `NODE_OPTIONS`, preservando o que já
-  houver; se quem chama já definiu um `max-old-space-size`, fica o dele.
-- Ajustes por variável: `BUILD_PESADO_ESPERA_S` (padrão 1800),
-  `BUILD_PESADO_HEAP_MB` (padrão 1024), `BUILD_PESADO_CARENCIA_S` (padrão 30),
-  `BUILD_PESADO_LOCK`. Os valores em segundos são inteiros sem zero à esquerda
-  (`08` é recusado com código 64).
-- O comando roda em sessão e grupo de processos próprios (`setsid`), sem
-  terminal de controle: comando que pede senha em `/dev/tty` não funciona por
-  aqui. `HUP`, `INT`, `QUIT` e `TERM` no `build-pesado` viram `TERM` para o
-  grupo inteiro (o comando e o que ele disparou); a trava só solta com o grupo
-  vazio, quem não encerrar em `BUILD_PESADO_CARENCIA_S` leva `KILL`, e a saída
-  é 128 + o sinal.
-- **`KILL` no `build-pesado`** (só nele ou no grupo de processos dele, que é
-  como um executor de agente encerra no estouro de tempo): o script morre sem
-  tratar, mas um vigia (ache com `pgrep -f build-pesado-vigia`; em sessão
-  própria, com a trava na mão) percebe, manda `TERM` ao grupo do comando,
-  `KILL` em quem não encerrar em `BUILD_PESADO_CARENCIA_S`, e só então solta a
-  trava.
-- **Limite do `KILL`:** `kill -9` no `build-pesado` **e** no vigia solta a
-  trava na hora e deixa o build rodando. Para interromper um build, mande
-  `TERM` ao `build-pesado`.
-- Quem espera vê apenas o pid, a hora, o nome do comando e o diretório de quem
-  está com a trava (`/var/lock/build-pesado.lock.dono`); os argumentos não são
-  gravados, porque podem carregar segredo.
-- Chamada aninhada (script sob a trava que chama `build-pesado` de novo) não
-  espera por si mesma, desde que o `build-pesado` de fora ainda esteja vivo e
-  seja ancestral. Processo que sobrou de um build encerrado entra na fila como
-  qualquer outro.
-- Dentro de `docker build` o ambiente de quem chama não entra e o `--memory` é
-  ignorado pelo BuildKit: o teto só vale se o Dockerfile declarar
-  `ARG NODE_OPTIONS` e `ENV NODE_OPTIONS=$NODE_OPTIONS` no estágio de build. A
-  trava vale de qualquer jeito.
-- A trava só protege quem passa por ela: build disparado sem o `build-pesado`
-  continua concorrendo.
+1. enviar a alteração para uma branch do repositório;
+2. executar ou aguardar o workflow do GitHub Actions;
+3. corrigir falhas no workflow;
+4. publicar somente o artefato ou a imagem versionada aprovada pelo CI.
 
-Instalar ou atualizar no `creators`: `~/.local/bin/build-pesado` e
-`/usr/local/bin/build-pesado` são **cópias** iguais de um commit já enviado à
-`main`, não links para o checkout (edição ainda não revisada no infra não muda o
-que os agentes executam). A de `/usr/local/bin` (dono `root`, gravada com
-`sudo -n`) existe porque `~/.local/bin` só entra no PATH em shell de login: em
-cron, systemd ou `env -i` os scripts de deploy não achavam o wrapper e
-construíam sem trava e sem teto, em silêncio. O instalador grava as duas de uma
-vez. Depois do push:
+O servidor pode executar verificações leves que não compilam o projeto. Se o
+GitHub Actions estiver indisponível por cobrança, cota ou configuração, o build
+fica bloqueado até a causa ser resolvida. A indisponibilidade do runner não
+autoriza transferir o build para o `creators` ou para um servidor de produção.
 
-```bash
-git -C ~/projetos/infra fetch origin main
-~/projetos/infra/scripts/instalar-build-pesado.sh            # origin/main
-~/projetos/infra/scripts/instalar-build-pesado.sh <commit>   # ou um commit específico
-tail -n 1 ~/.local/bin/build-pesado                          # mostra o commit instalado
-cmp ~/.local/bin/build-pesado /usr/local/bin/build-pesado    # as duas cópias são iguais
-```
-
-O instalador recusa (código 65) commit que não esteja em `origin/main` e troca
-cada arquivo de forma atômica; build em andamento segue com a versão que já
-abriu. Sai com 73 se não conseguir gravar num destino (sem `sudo`, por exemplo);
-confere todos antes de trocar o primeiro, então nesse caso as duas cópias ficam
-como estavam.
+O `build-pesado` foi removido do repositório e do `creators`: serializar o build
+no mesmo host ainda consome recursos que pertencem aos agentes. Em 17/10/2026,
+builds concorrentes no `creators` esgotaram memória e swap, acionaram o OOM
+killer e exigiram reinício do host.
 
 ## Histórico
 
