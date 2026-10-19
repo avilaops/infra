@@ -289,12 +289,25 @@ healthy() {
   done
   return 1
 }
+# Redes extras opcionais por aplicacao; nao alterar a rede principal do banco.
+connect_extra_networks() {
+  local network current
+  for network in ${POST_DEPLOY_NETWORKS:-}; do
+    [[ "$network" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || fail 'Rede complementar invalida.'
+    docker network inspect "$network" >/dev/null || fail 'Rede complementar ausente.'
+    current=" $(docker inspect --format '{{range $name,$value := .NetworkSettings.Networks}}{{$name}} {{end}}' "$CONTAINER") "
+    if [[ "$current" != *" $network "* ]]; then
+      docker network connect "$network" "$CONTAINER" || fail 'Falha ao conectar rede complementar.'
+    fi
+  done
+}
+
 rollback() {
   local status=$?
   trap - EXIT INT TERM
   printf 'Falha no deploy. Restaurando a imagem anterior.\n' >&2
   write_override "$previous_image"
-  if "${rollback_compose[@]}" up -d --no-deps --no-build --pull never "$SERVICE" && healthy; then
+  if "${rollback_compose[@]}" up -d --no-deps --no-build --pull never "$SERVICE" && connect_extra_networks && healthy; then
     printf 'Imagem anterior restaurada.\n' >&2
   else
     printf 'Falha ao restaurar o servico. Intervencao necessaria.\n' >&2
@@ -309,6 +322,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 "${compose[@]}" config --quiet
 "${compose[@]}" up -d --no-deps --no-build --pull never "$SERVICE"
+connect_extra_networks
 healthy || fail 'O servico nao passou na verificacao de saude.'
 expected_image=$(docker image inspect --format '{{.Id}}' "$image")
 [[ $(docker inspect --format '{{.Image}}' "$CONTAINER") == "$expected_image" ]] || fail 'O container nao executa a imagem solicitada.'
