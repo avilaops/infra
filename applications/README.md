@@ -181,19 +181,10 @@ distribuição e manifestação de NF-e) respondem erro, porque nenhum certifica
 
 ## `mcp-avilaops-com/`
 
-Compose do endereço único dos servidores MCP (código em `avilaops/mcp.avilaops.com`), instalado
-em `/opt/mcp-avilaops-com`. O serviço faz o login dos conectores (OAuth 2.1, com a identidade
-vinda do `auth.avilaops.com`, aplicação e cliente OIDC `mcp`) e repassa cada pedido ao servidor
-MCP de verdade: `/infisical` e `/gsc` são workflows do n8n, `/fiscal` é o
-`fiscal-avilaops-com-web`. O Caddy do host encaminha para `172.31.0.18:8080`.
-
-Publica-se como os outros containers (`BUILD-MANUAL.md`, destino em
-`deploy/production/mcp.avilaops.com.conf`). A primeira subida, em 10/10/2026, foi à mão.
-
-O `.env` (600) guarda o segredo do cliente OIDC, o token que cada workflow do n8n pede e o
-SHA-256 dos tokens de serviço aceitos. O estado fica no volume `mcp-avilaops-com-dados`
-(SQLite, só hashes); perder o volume só obriga todo mundo a fazer login de novo. Prova de ponta
-a ponta: `/root/.credenciais/e2e_mcp.sh` no `applications`.
+Migrado integralmente para o `apps-noclient` em 24/10/2026. O compose, o Caddy,
+o volume SQLite e as instruções operacionais estão em
+[`apps-noclient/mcp-avilaops-com/`](../apps-noclient/mcp-avilaops-com/) e
+[`apps-noclient/README.md`](../apps-noclient/README.md).
 
 ## `inventario-capacidades`
 

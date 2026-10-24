@@ -1,5 +1,5 @@
 # Endereco unico dos servidores MCP da Avila Ops, em /opt/mcp-avilaops-com no
-# servidor applications. Codigo em avilaops/mcp.avilaops.com. Segue a Norma de
+# servidor apps-noclient. Codigo em avilaops/mcp.avilaops.com. Segue a Norma de
 # Plataforma: todo nome sai de `mcp.avilaops.com` e nenhuma porta e publicada
 # no host.
 #
