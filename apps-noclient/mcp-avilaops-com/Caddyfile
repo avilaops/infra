@@ -1,0 +1,8 @@
+# Bloco instalado no Caddy nativo do apps-noclient.
+mcp.avilaops.com {
+	encode zstd gzip
+	reverse_proxy 172.31.0.18:8080 {
+		# Fluxo de eventos do MCP: entregar cada evento na hora.
+		flush_interval -1
+	}
+}

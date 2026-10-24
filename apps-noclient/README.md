@@ -8,10 +8,32 @@ no mesmo commit (e o contrário).
 |---|---|---|
 | `backup-todos-bancos.sh` | `/usr/local/bin/backup-todos-bancos.sh` (`root:root`, 755) | `/etc/cron.d/backup-todos-bancos`, 03:30 UTC |
 | `infisical/docker-compose.yml` | `/opt/infisical/docker-compose.yml` (`root:root`, 644) | `docker compose` em `/opt/infisical` |
+| `mcp-avilaops-com/docker-compose.yml` | `/opt/mcp-avilaops-com/docker-compose.yml` (`root:root`, 644) | Docker Compose, contêiner `mcp-avilaops-com-web` |
 
 ```bash
 ssh apps-noclient sha256sum /usr/local/bin/backup-todos-bancos.sh /opt/infisical/docker-compose.yml   # instalado
+ssh apps-noclient sha256sum /opt/mcp-avilaops-com/docker-compose.yml                                  # instalado
 sha256sum apps-noclient/backup-todos-bancos.sh apps-noclient/infisical/docker-compose.yml             # versionado
+sha256sum apps-noclient/mcp-avilaops-com/docker-compose.yml                                           # versionado
+```
+
+## MCP único da Ávila Ops
+
+Desde 24/10/2026, `mcp.avilaops.com` reside integralmente neste servidor. O
+registro A aponta para `204.168.249.111`; o Caddy encaminha para o contêiner na
+rede `edge`, em `172.31.0.18:8080`. Compose e trecho do Caddy ficam em
+`apps-noclient/mcp-avilaops-com/`.
+
+O diretório instalado é `/opt/mcp-avilaops-com`. O `.env` (600) guarda o
+segredo OIDC e tokens internos; não é versionado. O estado de clientes OAuth e
+tokens em hash fica no volume `mcp-avilaops-com-dados`. O backend GSC continua
+em `/opt/mcp-gsc`, acessado localmente por `10.10.0.4:8091`.
+
+Verificação sem credencial:
+
+```bash
+curl -fsS https://mcp.avilaops.com/health
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://mcp.avilaops.com/mcp  # 401
 ```
 
 O `/usr/local/bin/sync-r2.sh` do `apps-noclient` (04:00 UTC, `/etc/cron.d/avila-r2-backup`)
