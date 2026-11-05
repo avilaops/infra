@@ -198,13 +198,29 @@ prune_old_images() {
     docker image rm "$id" </dev/null >/dev/null 2>&1 || true
   done
 }
+parse_request() {
+  [[ $# == 2 ]] || fail 'Comando de deploy invalido.'
+  application=$1
+  [[ "$application" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || fail 'Aplicacao invalida.'
+  read -r verb requested_application image extra <<< "$2"
+  [[ "$verb" == deploy || "$verb" == prepare ]] || fail 'Operacao de deploy invalida.'
+  [[ "$2" == "$verb $application $image" && "$requested_application" == "$application" && -z "$extra" ]] || fail 'Chave sem acesso a esta aplicacao.'
+  [[ "$image" =~ ^ghcr\.io/[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$ ]] || fail 'A imagem precisa ter um digest SHA256.'
+}
+
+pull_image() (
+  # Subshell descarta o token e garante limpeza inclusive em falha de login/pull.
+  IFS= read -r registry_token || fail 'Token temporario do GHCR ausente.'
+  [[ -n "$registry_token" ]] || fail 'Token temporario do GHCR vazio.'
+  registry_config=$(mktemp -d)
+  trap 'rm -rf "$registry_config"' EXIT
+  printf '%s\n' "$registry_token" | docker --config "$registry_config" login ghcr.io --username avilaops --password-stdin >/dev/null 2>&1
+  unset registry_token
+  docker --config "$registry_config" pull "$image"
+)
+
 [[ $EUID == 0 ]] || fail 'O dispatcher precisa executar como root.'
-[[ $# == 2 ]] || fail 'Comando de deploy invalido.'
-application=$1
-[[ "$application" =~ ^[a-z0-9][a-z0-9.-]*$ ]] || fail 'Aplicacao invalida.'
-read -r verb requested_application image extra <<< "$2"
-[[ "$2" == "deploy $application $image" && "$verb" == deploy && "$requested_application" == "$application" && -z "$extra" ]] || fail 'Chave sem acesso a esta aplicacao.'
-[[ "$image" =~ ^ghcr\.io/[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$ ]] || fail 'A imagem precisa ter um digest SHA256.'
+parse_request "$@"
 
 config="/etc/avilaops/deploy/$application.conf"
 [[ -f "$config" && ! -L "$config" ]] || fail 'Aplicacao sem configuracao de deploy.'
@@ -217,6 +233,9 @@ source "$config"
 : "${IMAGE_REPOSITORY:?}"
 DEPLOY_MODE=${DEPLOY_MODE:-container}
 [[ "$image" == "$IMAGE_REPOSITORY"@sha256:* ]] || fail 'Repositorio de imagem nao autorizado.'
+if [[ "$verb" == prepare ]]; then
+  [[ "${ALLOW_IMAGE_PREPARE:-false}" == true ]] || fail 'Preparacao de imagem nao habilitada para esta aplicacao.'
+fi
 state_dir="/var/lib/avilaops/deploy/$application"
 install -d -m 700 "$state_dir"
 exec 9>"$state_dir/lock"
@@ -225,15 +244,11 @@ flock -w 600 9 || fail 'Outro deploy continua em andamento.'
 preflight </dev/null
 ensure_space </dev/null
 # Token temporario do proprio job, recebido pelo canal SSH e descartado apos o pull.
-IFS= read -r registry_token || fail 'Token temporario do GHCR ausente.'
-[[ -n "$registry_token" ]] || fail 'Token temporario do GHCR vazio.'
-registry_config=$(mktemp -d)
-trap 'rm -rf "$registry_config"' EXIT
-printf '%s\n' "$registry_token" | docker --config "$registry_config" login ghcr.io --username avilaops --password-stdin >/dev/null 2>&1
-unset registry_token
-docker --config "$registry_config" pull "$image"
-rm -rf "$registry_config"
-trap - EXIT
+pull_image
+if [[ "$verb" == prepare ]]; then
+  printf 'Imagem preparada sem migrar ou trocar o servico: %s %s\n' "$application" "$image"
+  exit 0
+fi
 run_migrations "${PROJECT_DIR:-${APP_ROOT:-.}}"
 if [[ "$DEPLOY_MODE" == static ]]; then
   : "${WEB_ROOT:?}"
