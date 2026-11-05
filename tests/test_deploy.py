@@ -532,7 +532,7 @@ esac
     def antes_do_token(self):
         # As linhas de verdade do script entre a trava e a leitura do token.
         trecho = SCRIPT.read_text().split("fail 'Outro deploy continua em andamento.'\n")[1]
-        trecho, leitura, _ = trecho.partition('IFS= read -r registry_token')
+        trecho, leitura, _ = trecho.partition('# Token temporario do proprio job')
         self.assertTrue(leitura)
         self.assertIn('preflight', trecho)
         self.assertIn('ensure_space', trecho)
@@ -565,6 +565,98 @@ esac
         self.assertIn('image prune --force', self.docker_log())
         self.assertIn('builder prune --force', self.docker_log())
         self.assertTrue(any(linha.endswith('config --services') for linha in self.docker_log()))
+
+
+class PrepararImagem(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.bin = self.root / 'bin'
+        self.bin.mkdir()
+        self.work = self.root / 'work'
+        self.work.mkdir()
+        self.image = 'ghcr.io/avilaops/lojas.avilaops.com@sha256:' + 'a' * 64
+        self.config = self.root / 'config'
+        self.config.mkdir()
+        self.conf = self.config / 'lojas.avilaops.com.conf'
+        self.conf.write_text('DEPLOY_MODE=container\nPROJECT_DIR=' + str(self.root)
+                             + '\nCOMPOSE_FILE=' + str(self.root / 'compose.yml')
+                             + '\nCOMPOSE_PROJECT=lojas\nSERVICE=lojas\nCONTAINER=lojas\n'
+                             'HEALTH_URL=http://localhost\nALLOW_IMAGE_PREPARE=true\n'
+                             'IMAGE_REPOSITORY=ghcr.io/avilaops/lojas.avilaops.com\n')
+        (self.root / 'compose.yml').write_text('services: {}\n')
+        script = SCRIPT.read_text().replace('/etc/avilaops/deploy', str(self.config))
+        script = script.replace('/var/lib/avilaops/deploy', str(self.root / 'state'))
+        # O teste usa um dispatcher isolado sem root; stat confirma os modos
+        # esperados sem acessar /etc, /var/lib ou Docker do runner.
+        script = script.replace("[[ $EUID == 0 ]] || fail 'O dispatcher precisa executar como root.'", ':')
+        self.script = self.root / 'dispatch.sh'
+        self.script.write_text(script)
+        self.stub('stat', '#!/bin/bash\nif [[ "$2" == %u ]]; then echo 0; else echo 600; fi\n')
+        self.stub('df', '#!/bin/bash\nprintf "Filesystem MB Used Available Capacity Mounted\\n/tmp 90000 10000 80000 10%% /tmp\\n"\n')
+        self.stub('docker', '''#!/bin/bash
+set -eu
+echo "$*" >> "$TEST_ROOT/docker.log"
+case "$*" in
+ *login*) cat > "$TEST_ROOT/token" ;;
+ *pull*) [ "${FAIL_PULL:-0}" != 1 ] || exit 42 ;;
+ *"config --services") echo lojas ;;
+ inspect*) echo sha256:$(printf 'a%.0s' {1..64}) ;;
+esac
+''')
+        self.env = dict(os.environ, PATH=str(self.bin) + ':' + os.environ['PATH'],
+                        TMPDIR=str(self.work), TEST_ROOT=str(self.root))
+
+    def stub(self, name, content):
+        file = self.bin / name
+        file.write_text(content)
+        file.chmod(0o755)
+
+    def run_dispatch(self, command=None, token='token-de-teste\n', **env):
+        return subprocess.run(['bash', str(self.script), 'lojas.avilaops.com',
+                               command or 'prepare lojas.avilaops.com ' + self.image],
+                              env=dict(self.env, **env), input=token, capture_output=True, text=True)
+
+    def test_prepare_baixa_sem_migrar_sem_ativar_e_limpa_token(self):
+        result = self.run_dispatch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = (self.root / 'docker.log').read_text()
+        self.assertIn('pull ' + self.image, log)
+        self.assertNotIn(' up ', log)
+        self.assertNotIn('create ', log)
+        self.assertFalse((self.root / 'state/lojas.avilaops.com/image.yml').exists())
+        self.assertEqual((self.root / 'token').read_text(), 'token-de-teste\n')
+        self.assertNotIn('token-de-teste', result.stdout + result.stderr)
+        self.assertEqual(list(self.work.iterdir()), [])
+
+    def test_falha_de_pull_propaga_e_limpa_credencial(self):
+        result = self.run_dispatch(FAIL_PULL='1')
+        self.assertEqual(result.returncode, 42, result.stderr)
+        self.assertEqual(list(self.work.iterdir()), [])
+
+    def test_prepare_exige_opt_in(self):
+        self.conf.write_text(self.conf.read_text().replace('ALLOW_IMAGE_PREPARE=true', 'ALLOW_IMAGE_PREPARE=false'))
+        result = self.run_dispatch()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / 'docker.log').exists())
+
+    def test_rejeita_outro_dominio_repositorio_tag_e_comando_extra(self):
+        for command in ['prepare outro.exemplo ' + self.image,
+                        'prepare lojas.avilaops.com ' + self.image.replace('/lojas.avilaops.com@', '/outro@'),
+                        'prepare lojas.avilaops.com ghcr.io/avilaops/lojas.avilaops.com:latest',
+                        'prepare lojas.avilaops.com ' + self.image + '; id',
+                        'prepare lojas.avilaops.com ' + self.image + '\nid',
+                        'exec lojas.avilaops.com ' + self.image]:
+            with self.subTest(command=command):
+                self.assertNotEqual(self.run_dispatch(command).returncode, 0)
+                self.assertFalse((self.root / 'docker.log').exists())
+
+    def test_token_ausente_ou_vazio_falha_sem_login(self):
+        for token in ['', '\n']:
+            with self.subTest(token=token):
+                self.assertNotEqual(self.run_dispatch(token=token).returncode, 0)
+                self.assertNotIn('login', (self.root / 'docker.log').read_text())
 
 
 if __name__ == '__main__':
